@@ -40,6 +40,10 @@ CODE_REPO=${KIOSKAGE_REPO:-https://github.com/imush/kioskage.git}
 BRANCH=${KIOSKAGE_BRANCH:-prod}          # release channel: prod (fleet) | staging (canary)
 OVERLAY_DIR=${KIOSKAGE_OVERLAY_SRC:-/usr/local/src/kioskage-overlay}
 OVERLAY_REPO=${KIOSKAGE_OVERLAY_REPO:-}
+# The overlay is versioned independently of the code channel — its own branch
+# (default main), NOT staging/prod. So a canary on the staging code channel
+# still pulls the overlay from main unless you deliberately branch the overlay.
+OVERLAY_BRANCH=${KIOSKAGE_OVERLAY_BRANCH:-main}
 
 KIOSKAGE_HOME=/usr/local/libexec/kioskage
 HEALTH_TIMEOUT=${HEALTH_TIMEOUT:-25}
@@ -83,18 +87,18 @@ apply_rev() {
   sh "$CODE_DIR/provision/apply.sh" "$@" || log "apply.sh reported an error"
 }
 
-# sync_repo <dir> <url>  ->  prints "<before> <after>" (before empty on fresh
-# clone). Returns non-zero on a git failure.
+# sync_repo <dir> <url> <branch>  ->  prints "<before> <after>" (before empty on
+# fresh clone). Returns non-zero on a git failure.
 sync_repo() {
-  d=$1; r=$2
+  d=$1; r=$2; brn=$3
   if [ -d "$d/.git" ]; then
-    git -C "$d" fetch --quiet origin "$BRANCH"
+    git -C "$d" fetch --quiet origin "$brn"
     b=$(git -C "$d" rev-parse HEAD)
-    git -C "$d" reset --hard --quiet "origin/$BRANCH"
+    git -C "$d" reset --hard --quiet "origin/$brn"
     echo "$b $(git -C "$d" rev-parse HEAD)"
   else
     mkdir -p "$(dirname "$d")"; rm -rf "$d"
-    git clone --quiet --branch "$BRANCH" "$r" "$d"
+    git clone --quiet --branch "$brn" "$r" "$d"
     echo " $(git -C "$d" rev-parse HEAD)"
   fi
 }
@@ -106,15 +110,15 @@ pgrep -q chrome 2>/dev/null && kiosk_before=yes
 # ── Fetch code (+ overlay) ───────────────────────────────────────────────────
 
 log "Fetching kioskage code ($BRANCH)"
-code_res=$(sync_repo "$CODE_DIR" "$CODE_REPO") \
+code_res=$(sync_repo "$CODE_DIR" "$CODE_REPO" "$BRANCH") \
   || { log "!! code fetch/clone failed"; exit 1; }
 code_before=${code_res% *}; code_after=${code_res#* }
 changed=no; [ "$code_before" != "$code_after" ] && changed=yes
 
 ovl_before=""; ovl_after=""
 if [ -n "$OVERLAY_REPO" ]; then
-  log "Fetching brand overlay ($BRANCH)"
-  ovl_res=$(sync_repo "$OVERLAY_DIR" "$OVERLAY_REPO") \
+  log "Fetching brand overlay ($OVERLAY_BRANCH)"
+  ovl_res=$(sync_repo "$OVERLAY_DIR" "$OVERLAY_REPO" "$OVERLAY_BRANCH") \
     || { log "!! overlay fetch/clone failed"; exit 1; }
   ovl_before=${ovl_res% *}; ovl_after=${ovl_res#* }
   [ "$ovl_before" != "$ovl_after" ] && changed=yes

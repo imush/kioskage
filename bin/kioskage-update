@@ -28,12 +28,16 @@
 #
 set -eu
 
+# Per-stick deployment config, sourced FIRST so it can set the release channel
+# (KIOSKAGE_BRANCH) and the overlay repo. This is how a canary follows 'staging'
+# while the fleet follows 'prod': set KIOSKAGE_BRANCH="staging" on the few test
+# sticks, leave it unset (=> prod) on the rest. Push updates to staging, validate
+# on the canaries, then promote staging -> prod for the fleet.
+[ -r /usr/local/etc/kioskage-overlay.conf ] && . /usr/local/etc/kioskage-overlay.conf
+
 CODE_DIR=${KIOSKAGE_SRC:-/usr/local/src/kioskage}
 CODE_REPO=${KIOSKAGE_REPO:-https://github.com/imush/kioskage.git}
-BRANCH=${KIOSKAGE_BRANCH:-main}
-
-# Per-deployment overlay config lives in a file so it persists across cron runs.
-[ -r /usr/local/etc/kioskage-overlay.conf ] && . /usr/local/etc/kioskage-overlay.conf
+BRANCH=${KIOSKAGE_BRANCH:-prod}          # release channel: prod (fleet) | staging (canary)
 OVERLAY_DIR=${KIOSKAGE_OVERLAY_SRC:-/usr/local/src/kioskage-overlay}
 OVERLAY_REPO=${KIOSKAGE_OVERLAY_REPO:-}
 

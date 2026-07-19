@@ -30,6 +30,7 @@ pkg update
 # (/usr/sbin), so they are not installed as packages here.
 pkg install -y \
     python3 \
+    git-lite \
     chromium \
     xorg-minimal xf86-video-intel xinit openbox unclutter \
     drm-kmod \

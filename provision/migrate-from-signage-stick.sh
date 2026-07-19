@@ -17,15 +17,18 @@
 # still intact; the legacy services/OTA are only retired AFTER the kioskage
 # portal answers on :80. If the check fails, signage is restored and we abort.
 #
-# Usage:  sh migrate-from-signage-stick.sh [overlay-repo-url]
+# Usage:  sh migrate-from-signage-stick.sh [overlay-repo-url] [channel]
 #   overlay-repo-url  optional PRIVATE brand overlay (git@github.com:you/x.git).
 #                     Register the stick's existing deploy key on THAT repo first.
+#   channel           release channel this stick follows: prod (fleet, default)
+#                     or staging (canary). Written to kioskage-overlay.conf.
 #
 set -eu
 
 REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)          # the kioskage checkout
 PREFIX=/usr/local
 OVERLAY_REPO=${1:-${KIOSKAGE_OVERLAY_REPO:-}}
+CHANNEL=${2:-${KIOSKAGE_BRANCH:-prod}}
 HEALTH_TIMEOUT=${HEALTH_TIMEOUT:-30}
 
 log() { echo ">>> $*"; }
@@ -49,12 +52,12 @@ if [ -f "$PREFIX/etc/signage.conf" ] && [ ! -f "$PREFIX/etc/kioskage.conf" ]; th
   chmod 600 "$PREFIX/etc/kioskage.conf"
 fi
 
-# 2. Record the private brand overlay so OTA pulls your branding.
-if [ -n "$OVERLAY_REPO" ]; then
-  log "Configuring brand overlay: $OVERLAY_REPO"
-  printf 'KIOSKAGE_OVERLAY_REPO="%s"\n' "$OVERLAY_REPO" \
-    > "$PREFIX/etc/kioskage-overlay.conf"
-fi
+# 2. Record the release channel + private brand overlay in the deploy config.
+log "Setting release channel: $CHANNEL${OVERLAY_REPO:+, overlay: $OVERLAY_REPO}"
+{
+  printf 'KIOSKAGE_BRANCH="%s"\n' "$CHANNEL"
+  [ -n "$OVERLAY_REPO" ] && printf 'KIOSKAGE_OVERLAY_REPO="%s"\n' "$OVERLAY_REPO"
+} > "$PREFIX/etc/kioskage-overlay.conf"
 
 # 3. Install kioskage (creates the kioskage user, files, neutral brand.conf,
 #    rc.d services, enables them in rc.conf, installs the OTA updater + cron).

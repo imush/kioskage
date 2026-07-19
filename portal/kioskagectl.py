@@ -77,8 +77,19 @@ def load_brand():
                     continue
                 k, v = line.split("=", 1)
                 k = k.strip()
+                v = v.strip()
+                # Take the quoted value (ignoring any trailing inline comment);
+                # for an unquoted value strip a trailing comment. Note a '#' can
+                # be inside a quoted value, e.g. ACCENT_COLOR="#3a6ea5".
+                if v[:1] == '"':
+                    v = v[1:]
+                    end = v.find('"')
+                    if end >= 0:
+                        v = v[:end]
+                else:
+                    v = v.split("#", 1)[0].strip()
                 if k in brand:
-                    brand[k] = v.strip().strip('"')
+                    brand[k] = v
     except FileNotFoundError:
         pass
     return brand

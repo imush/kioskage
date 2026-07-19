@@ -1,0 +1,13 @@
+# /usr/local/etc/kioskage.conf
+#
+# Written automatically by the setup portal on a successful connection.
+# This sample documents the fields; you normally never edit it by hand.
+
+CONFIGURED="yes"          # yes once provisioned; boot shows the portal if not
+NET_MODE="ethernet"       # ethernet | wifi
+WIFI_SSID=""              # set when NET_MODE=wifi
+WIFI_PSK=""               # WPA passphrase; empty for an open network
+CONTENT_URL="https://example.com/"
+HOSTNAME="kiosk-a1b2c3"   # also the mDNS name: kiosk-a1b2c3.local
+KIOSK_KEY=""              # optional; builds CONTENT_URL_BASE + "?key=<key>"
+AUTO_START="yes"          # launch the kiosk automatically at boot

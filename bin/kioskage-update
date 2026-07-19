@@ -1,0 +1,156 @@
+#!/bin/sh
+#
+# kioskage-update - pull the latest kioskage (+ optional brand overlay) and
+# apply it (OTA app update), with a health check and automatic rollback.
+#
+# Two repos:
+#   - CODE:    the public kioskage repo, cloned over HTTPS (no auth needed).
+#   - OVERLAY: an optional PRIVATE brand repo (brand.conf + logo), cloned over
+#              SSH with the stick's read-only deploy key. Set its URL in
+#              /usr/local/etc/kioskage-overlay.conf (KIOSKAGE_OVERLAY_REPO=...)
+#              or the environment; empty = a pure, unbranded kioskage.
+#
+# Idempotent and safe to run on a timer: if neither repo changed upstream it
+# exits without touching anything. After applying, the stick is health-checked;
+# if it does not come back up, BOTH repos are reset to their previous revisions
+# and re-applied, so the deployed state is always the last one that passed.
+#
+# Health = the portal answers on :80. For a --kiosk update that restarted a
+# display which was already running, health also requires Xorg + Chromium back.
+#
+# Env overrides:
+#   KIOSKAGE_SRC / KIOSKAGE_REPO        code checkout dir / URL
+#   KIOSKAGE_OVERLAY_SRC / _OVERLAY_REPO overlay checkout dir / URL
+#   KIOSKAGE_BRANCH  branch/ref to track (default main)
+#   HEALTH_TIMEOUT / KIOSK_TIMEOUT        seconds to wait (25 / 30)
+#
+# Pass-through args (e.g. --kiosk) are forwarded to provision/apply.sh.
+#
+set -eu
+
+CODE_DIR=${KIOSKAGE_SRC:-/usr/local/src/kioskage}
+CODE_REPO=${KIOSKAGE_REPO:-https://github.com/imush/kioskage.git}
+BRANCH=${KIOSKAGE_BRANCH:-main}
+
+# Per-deployment overlay config lives in a file so it persists across cron runs.
+[ -r /usr/local/etc/kioskage-overlay.conf ] && . /usr/local/etc/kioskage-overlay.conf
+OVERLAY_DIR=${KIOSKAGE_OVERLAY_SRC:-/usr/local/src/kioskage-overlay}
+OVERLAY_REPO=${KIOSKAGE_OVERLAY_REPO:-}
+
+KIOSKAGE_HOME=/usr/local/libexec/kioskage
+HEALTH_TIMEOUT=${HEALTH_TIMEOUT:-25}
+KIOSK_TIMEOUT=${KIOSK_TIMEOUT:-30}
+
+log() { echo ">>> $*"; }
+
+portal_ok() {
+  i=0
+  while [ "$i" -lt "$HEALTH_TIMEOUT" ]; do
+    fetch -qo /dev/null "http://127.0.0.1/api/status" 2>/dev/null && return 0
+    sleep 1; i=$((i + 1))
+  done
+  return 1
+}
+
+kiosk_ok() {
+  i=0
+  while [ "$i" -lt "$KIOSK_TIMEOUT" ]; do
+    pgrep -q Xorg && pgrep -q chrome && return 0
+    sleep 1; i=$((i + 1))
+  done
+  return 1
+}
+
+kiosk_requested() {
+  for a in "$@"; do [ "$a" = "--kiosk" ] && return 0; done
+  return 1
+}
+
+healthy() {
+  portal_ok || { log "portal did not come up"; return 1; }
+  if kiosk_requested "$@" && [ "${kiosk_before:-no}" = yes ]; then
+    kiosk_ok || { log "kiosk (Xorg+Chromium) did not come up"; return 1; }
+  fi
+  return 0
+}
+
+apply_rev() {
+  # Never let an apply error abort the caller - health check + rollback decide.
+  sh "$CODE_DIR/provision/apply.sh" "$@" || log "apply.sh reported an error"
+}
+
+# sync_repo <dir> <url>  ->  prints "<before> <after>" (before empty on fresh
+# clone). Returns non-zero on a git failure.
+sync_repo() {
+  d=$1; r=$2
+  if [ -d "$d/.git" ]; then
+    git -C "$d" fetch --quiet origin "$BRANCH"
+    b=$(git -C "$d" rev-parse HEAD)
+    git -C "$d" reset --hard --quiet "origin/$BRANCH"
+    echo "$b $(git -C "$d" rev-parse HEAD)"
+  else
+    mkdir -p "$(dirname "$d")"; rm -rf "$d"
+    git clone --quiet --branch "$BRANCH" "$r" "$d"
+    echo " $(git -C "$d" rev-parse HEAD)"
+  fi
+}
+
+# Whether a display was running before we touch anything.
+kiosk_before=no
+pgrep -q chrome 2>/dev/null && kiosk_before=yes
+
+# ── Fetch code (+ overlay) ───────────────────────────────────────────────────
+
+log "Fetching kioskage code ($BRANCH)"
+code_res=$(sync_repo "$CODE_DIR" "$CODE_REPO") \
+  || { log "!! code fetch/clone failed"; exit 1; }
+code_before=${code_res% *}; code_after=${code_res#* }
+changed=no; [ "$code_before" != "$code_after" ] && changed=yes
+
+ovl_before=""; ovl_after=""
+if [ -n "$OVERLAY_REPO" ]; then
+  log "Fetching brand overlay ($BRANCH)"
+  ovl_res=$(sync_repo "$OVERLAY_DIR" "$OVERLAY_REPO") \
+    || { log "!! overlay fetch/clone failed"; exit 1; }
+  ovl_before=${ovl_res% *}; ovl_after=${ovl_res#* }
+  [ "$ovl_before" != "$ovl_after" ] && changed=yes
+  export KIOSKAGE_OVERLAY_SRC="$OVERLAY_DIR"
+fi
+
+if [ "$changed" = no ] && [ -f "$KIOSKAGE_HOME/VERSION" ]; then
+  log "Already up to date ($(cat "$KIOSKAGE_HOME/VERSION")) - nothing to do"
+  exit 0
+fi
+
+# ── Apply + health check ─────────────────────────────────────────────────────
+
+apply_rev "$@"
+
+if healthy "$@"; then
+  log "Health check passed at $(cat "$KIOSKAGE_HOME/VERSION" 2>/dev/null || echo '?')"
+  log "kioskage-update done."
+  exit 0
+fi
+
+# ── Rollback both repos ──────────────────────────────────────────────────────
+
+log "!! Health check FAILED - rolling back"
+rolled=no
+if [ -n "$code_before" ]; then
+  git -C "$CODE_DIR" reset --hard --quiet "$code_before"; rolled=yes
+fi
+if [ -n "$OVERLAY_REPO" ] && [ -n "$ovl_before" ]; then
+  git -C "$OVERLAY_DIR" reset --hard --quiet "$ovl_before"; rolled=yes
+fi
+if [ "$rolled" = no ]; then
+  log "!! No previous revision to roll back to (fresh clone) - manual fix needed"
+  exit 1
+fi
+
+apply_rev "$@"
+if healthy "$@"; then
+  log "Rolled back to $(cat "$KIOSKAGE_HOME/VERSION" 2>/dev/null); stick healthy again"
+else
+  log "!! Rollback did not restore health - manual intervention needed"
+fi
+exit 1

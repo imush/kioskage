@@ -1,0 +1,29 @@
+#!/bin/sh
+#
+# PROVIDE: kioskage_portal
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+#
+# Configuration portal HTTP server. Runs as root because it drives ifconfig,
+# wpa_supplicant, dhclient and hostapd. Listens on :80 (all interfaces) so it
+# is reachable over Ethernet, over the setup AP, and via <hostname>.local.
+
+. /etc/rc.subr
+
+name=kioskage_portal
+rcvar=kioskage_portal_enable
+load_rc_config $name
+
+: ${kioskage_portal_enable:="NO"}
+
+kioskage_home=/usr/local/libexec/kioskage
+pidfile=/var/run/kioskage_portal.pid
+command=/usr/sbin/daemon
+command_args="-P ${pidfile} -r -f /usr/local/bin/python3 ${kioskage_home}/portal/server.py"
+
+start_precmd=kioskage_portal_precmd
+kioskage_portal_precmd() {
+    /bin/mkdir -p /var/run/kioskage
+}
+
+run_rc_command "$1"

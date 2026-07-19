@@ -1,0 +1,70 @@
+#!/bin/sh
+#
+# .xinitrc for the kioskage kiosk. Runs inside the X session: starts a minimal
+# window manager and then loops Chromium in kiosk mode so a crash or a manual
+# quit relaunches automatically. The content URL is read fresh each iteration
+# from /var/run/kioskage/url (written by the portal) or kioskage.conf.
+#
+
+# Blank-screen / power management off — a sign should never sleep.
+xset s off -dpms s noblank 2>/dev/null
+
+openbox &
+
+# Hide the idle mouse pointer — X otherwise parks a cursor in the middle of the
+# screen. It reappears if a mouse is actually moved (e.g. an air-mouse for
+# on-screen setup), then hides again after a second idle.
+unclutter -idle 1 >/dev/null 2>&1 &
+
+SETUP_FLAG=/var/run/kioskage/setup-mode
+
+read_url() {
+    # Always start Chromium on a local portal page, never straight on remote
+    # content:
+    #   - setup mode  -> the configuration portal (index.html)
+    #   - configured  -> the landing screen (landing.html), which shows this
+    #                    stick's address + QR and then redirects to the content
+    #                    URL (tagged with host/version by the portal's
+    #                    /api/status -> kiosk_url).
+    # Loading a local page first means Chromium comes up instantly and the
+    # address is always shown, even if the network/content is briefly unready.
+    if [ -f "$SETUP_FLAG" ]; then
+        printf 'http://127.0.0.1/'
+    else
+        printf 'http://127.0.0.1/landing.html'
+    fi
+}
+
+# Keep a throwaway profile in tmpfs so a read-only root stays clean.
+PROFILE=/var/run/kioskage/chrome-profile
+mkdir -p "$PROFILE"
+
+while :; do
+    URL=$(read_url)
+    # Wait (briefly) for the target to respond before launching Chromium, so a
+    # still-starting local portal or not-yet-ready network can't leave us stuck
+    # on a connection-refused / blank error page.
+    i=0
+    while [ "$i" -lt 30 ]; do
+        fetch -qo /dev/null -T 4 "$URL" 2>/dev/null && break
+        i=$((i + 1))
+        sleep 1
+    done
+    chrome \
+        --user-data-dir="$PROFILE" \
+        --kiosk \
+        --noerrdialogs \
+        --disable-infobars \
+        --no-first-run \
+        --disable-translate \
+        --disable-features=TranslateUI \
+        --disable-session-crashed-bubble \
+        --disable-restore-session-state \
+        --disk-cache-dir=/var/run/kioskage/chrome-cache \
+        --disk-cache-size=33554432 \
+        --autoplay-policy=no-user-gesture-required \
+        --check-for-update-interval=31536000 \
+        --start-maximized \
+        "$URL"
+    sleep 2
+done

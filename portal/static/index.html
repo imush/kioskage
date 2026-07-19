@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kioskage Setup</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="card">
+    <header>
+      <img src="/logo.png" alt="" class="logo" id="brandLogo" onerror="this.style.display='none'">
+      <h1 id="brandTitle">Kioskage Setup</h1>
+      <p class="sub" id="deviceLine">&nbsp;</p>
+    </header>
+
+    <p class="conn-banner hidden" id="connBanner"></p>
+
+    <section id="setupPanel" class="setup hidden">
+      <h2 id="setupTitle">Set up this display</h2>
+      <div id="setupConnect">
+        <p class="methods-lead">Connect this display to the internet — do one of:</p>
+        <ol class="methods">
+          <li><b>Ethernet</b> — plug in a network cable.</li>
+          <li><b>Wi-Fi</b> — start a phone hotspot named <code>hc</code> with
+              password <code id="setupPsk">hckioskage</code>. (On iPhone the name
+              can't be changed — just set that password; any name works, it just
+              takes a bit longer to find.)</li>
+          <li><b>Keyboard</b> — plug one in and
+              <a href="#" id="revealForm">set it up here on the screen</a>.</li>
+        </ol>
+        <p id="setupWaiting" class="waiting">Waiting for a network…</p>
+      </div>
+      <div id="setupReady" class="ready hidden">
+        <p class="ready-lead">Connected — scan to finish setup on your phone:</p>
+        <img id="setupQr" class="qr" src="/qr.svg" alt="Scan to open the setup portal">
+        <p class="addr">or open <code id="setupAddr">—</code> in a browser</p>
+      </div>
+    </section>
+
+    <div id="configForm">
+    <!-- Step 1: Network -->
+    <section class="step">
+      <h2>1 &middot; Network</h2>
+      <div class="seg" id="modeSeg">
+        <button type="button" data-mode="ethernet" class="active">Ethernet</button>
+        <button type="button" data-mode="wifi">Wi-Fi</button>
+      </div>
+
+      <div id="ethPane" class="pane">
+        <p class="muted" id="ethStatus">Checking cable&hellip;</p>
+      </div>
+
+      <div id="wifiPane" class="pane hidden">
+        <div class="row">
+          <select id="ssid"><option value="">Scan for networks&hellip;</option></select>
+          <button type="button" id="rescan" class="ghost">Scan</button>
+        </div>
+        <input type="text" id="ssidManual" placeholder="or type a hidden SSID">
+        <input type="password" id="psk" placeholder="Wi-Fi password" autocomplete="off">
+        <label class="check"><input type="checkbox" id="showPsk"> Show password</label>
+      </div>
+    </section>
+
+    <!-- Step 2: Hostname -->
+    <section class="step">
+      <h2>2 &middot; Device name</h2>
+      <input type="text" id="hostname" placeholder="kiosk-xxxxxx" autocomplete="off">
+      <p class="muted">Reachable as <code><span id="mdnsPreview">kiosk-xxxxxx</span>.local</code> once online.</p>
+    </section>
+
+    <!-- Step 3: Content -->
+    <section class="step">
+      <h2>3 &middot; Content</h2>
+      <input type="text" id="kioskKey" placeholder="Kiosk key (e.g. lobby)" autocomplete="off">
+      <input type="url" id="url" placeholder="https://your-content.example/…" autocomplete="off">
+      <p class="muted">The key builds the URL. Leave the key blank and edit the URL directly for other content.</p>
+    </section>
+
+    <label class="check big"><input type="checkbox" id="autostart" checked> Start automatically on every boot</label>
+
+    <button type="button" id="connect" class="primary">Connect &amp; Save</button>
+
+    <!-- Progress / result -->
+    <section id="progress" class="panel hidden">
+      <div class="spinner" id="spinner"></div>
+      <p id="progressMsg">Connecting&hellip;</p>
+    </section>
+
+    <section id="result" class="panel hidden">
+      <p id="resultMsg"></p>
+      <div id="resultDetail" class="detail hidden">
+        <p>IP address: <code id="ipOut"></code></p>
+        <p>Address: <code id="mdnsOut"></code></p>
+      </div>
+      <div id="startRow" class="row hidden">
+        <button type="button" id="startKiosk" class="primary">Start</button>
+        <button type="button" id="stopKiosk" class="ghost hidden">Stop</button>
+      </div>
+    </section>
+    </div><!-- /configForm -->
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

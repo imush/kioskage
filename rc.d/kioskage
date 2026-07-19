@@ -1,0 +1,79 @@
+#!/bin/sh
+#
+# PROVIDE: kioskage
+# REQUIRE: kioskage_portal dbus avahi_daemon
+# KEYWORD: shutdown
+#
+# The kioskage kiosk service. `start` runs the boot state machine (bring up the
+# saved network, set hostname, advertise mDNS) and, if AUTO_START is set,
+# launches the Chromium kiosk under the kioskage user via an X session with a
+# restart loop. `stop` tears the kiosk down.
+
+. /etc/rc.subr
+
+name=kioskage
+rcvar=kioskage_enable
+load_rc_config $name
+
+: ${kioskage_enable:="NO"}
+: ${kioskage_user:="kioskage"}
+
+kioskage_home=/usr/local/libexec/kioskage
+pidfile=/var/run/kioskage_kiosk.pid
+
+start_cmd=kioskage_start
+stop_cmd=kioskage_stop
+status_cmd=kioskage_status
+kiosk_cmd=kioskage_kiosk
+extra_commands="status kiosk"
+
+kioskage_start() {
+    # Boot state machine: connect network per config, set hostname, mDNS,
+    # and (if AUTO_START) launch the kiosk. Used at system boot.
+    /usr/local/bin/python3 ${kioskage_home}/portal/kioskagectl.py boot >/dev/null 2>&1
+}
+
+# Launch the kiosk only, without re-running the network boot sequence. This is
+# what the portal's Start/Restart button triggers.
+kioskage_kiosk() {
+    if [ -f "$pidfile" ] && kill -0 "$(cat $pidfile)" 2>/dev/null; then
+        echo "kioskage kiosk already running"
+        return 0
+    fi
+    echo "Starting kioskage kiosk"
+    # The volatile runtime dir is created as root at boot, but Chromium runs as
+    # the kioskage user and keeps its profile/cache here — make it writable.
+    /bin/mkdir -p /var/run/kioskage/chrome-profile /var/run/kioskage/chrome-cache
+    # Clear stale locks that otherwise wedge a restart into a black screen:
+    #  - X server lock/socket left by an unclean exit ("Cannot establish any
+    #    listening sockets"), and
+    #  - Chromium's SingletonLock, which is keyed to the hostname/pid — after a
+    #    hostname change a fresh Chromium thinks the (persistent) profile is "in
+    #    use on another computer" and refuses to start.
+    /bin/rm -f /tmp/.X0-lock /tmp/.X11-unix/X0
+    /bin/rm -f /var/run/kioskage/chrome-profile/Singleton*
+    /usr/sbin/chown -R ${kioskage_user}:${kioskage_user} /var/run/kioskage
+    # Launch X + Chromium as the kioskage user, self-restarting, under daemon(8).
+    /usr/sbin/daemon -P ${pidfile} -r -u ${kioskage_user} \
+        ${kioskage_home}/kioskage-session
+}
+
+kioskage_stop() {
+    echo "Stopping kioskage kiosk"
+    [ -f "$pidfile" ] && kill "$(cat $pidfile)" 2>/dev/null
+    pkill -f kioskage-session 2>/dev/null
+    pkill chrome 2>/dev/null
+    pkill Xorg 2>/dev/null
+    rm -f "$pidfile"
+    return 0
+}
+
+kioskage_status() {
+    if [ -f "$pidfile" ] && kill -0 "$(cat $pidfile)" 2>/dev/null; then
+        echo "kioskage kiosk is running (pid $(cat $pidfile))"
+    else
+        echo "kioskage kiosk is not running"
+    fi
+}
+
+run_rc_command "$1"

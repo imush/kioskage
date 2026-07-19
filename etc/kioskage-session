@@ -1,0 +1,9 @@
+#!/bin/sh
+#
+# kioskage-session - starts the X session for the kiosk. Run as the `kioskage`
+# user by the rc.d service via daemon(8), which restarts it if X ever exits.
+#
+export HOME=/home/kioskage
+export XAUTHORITY=$HOME/.Xauthority
+
+exec xinit /usr/local/libexec/kioskage/xinitrc -- :0 vt9 -keeptty -nolisten tcp

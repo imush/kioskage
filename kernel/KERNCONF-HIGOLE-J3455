@@ -1,0 +1,130 @@
+# KERNCONF-HIGOLE-J3455 - minimal kernel for the HIGOLE J3455 kioskage stick.
+#
+# Intel Celeron J3455 (Apollo Lake), amd64. Derived from GENERIC by removing
+# hardware this appliance never has, keeping only what it needs to boot and run
+# the kioskage stack (network, ssh, X11/HDMI, USB keyboard/mouse).
+#
+# KEPT - must-haves; removing any of these can make the stick UNBOOTABLE:
+#   - ACPI + CPU freq
+#   - PCI, USB (xhci/ehci), HID keyboard/mouse (ukbd/ums/uhid), USB storage
+#   - eMMC/SD root disk: sdhci + mmc + mmcsd            <-- the ROOT lives here
+#   - Realtek Ethernet: re + miibus + ether
+#   - 802.11 stack + crypto (onboard Intel iwm; USB run/rtwn dongles are modules)
+#   - evdev (X11 input), vt + vt_efifb (console + HDMI framebuffer before X)
+#   - bpf (DHCP!), INET/INET6, tun (WireGuard), tmpfs, msdosfs (EFI partition)
+#   - GEOM + the LinuxKPI infrastructure i915kms (drm-kmod) needs for HDMI/X
+#
+# MODULES, not compiled in (load at boot regardless of this config):
+#   i915kms (HDMI/GPU)  .  if_iwm (onboard wifi)  .  zfs (root pool)
+#
+# ── Build & install on a PKGBASE system (FreeBSD 15+). Do this AT THE CONSOLE
+#    the first time. Needs the matching /usr/src (fetch the release src.txz, or
+#    a git releng branch).
+#   cp KERNCONF-HIGOLE-J3455 /usr/src/sys/amd64/conf/HIGOLE-J3455
+#   cd /usr/src
+#   make -j$(sysctl -n hw.ncpu) buildkernel KERNCONF=HIGOLE-J3455
+#   cp -a /boot/kernel /boot/kernel.generic          # extra fallback copy
+#   # IMPORTANT: on pkgbase, DO NOT overwrite the packaged /boot/kernel
+#   # (installkernel refuses, to keep the pkg DB in sync). Install under a new
+#   # name and boot it via the loader instead:
+#   make installkernel KERNCONF=HIGOLE-J3455 INSTKERNNAME=kernel.custom
+#   sysrc -f /boot/loader.conf kernel="kernel.custom"
+#   reboot
+#   # Fallback if it won't boot: at the loader menu (3s) press a key -> Kernel
+#   # -> "kernel" (pristine packaged kernel), or at the OK prompt: unset kernel ; boot
+#   # The packaged /boot/kernel stays pkg-managed and still gets base updates;
+#   # rebuild kernel.custom after a FreeBSD source update.
+#
+# WARNING: this is a DRAFT - test at the console before trusting it, and expect
+# a round or two of adjustment (buildkernel flags any unknown device name early,
+# before install, so config typos are harmless). A custom kernel must be rebuilt
+# on every FreeBSD update and does NOT ride binary/pkgbase updates cleanly -
+# weigh that against the OTA update path before making it the default kernel.
+
+include     GENERIC
+ident       HIGOLE-J3455
+
+# ── Debug instrumentation: drop for a lean production kernel ────────────
+nooptions   WITNESS                 # lock-order diagnostics (large overhead)
+nooptions   WITNESS_SKIPSPIN
+nooptions   INVARIANTS              # extra runtime assertions
+nooptions   INVARIANT_SUPPORT
+nooptions   DEADLKRES               # deadlock resolver thread
+nooptions   BUF_TRACKING
+nooptions   FULL_BUF_TRACKING
+nooptions   MALLOC_DEBUG_MAXZONES
+
+# ── Storage we don't have (root is eMMC/mmcsd; USB umass/CAM is KEPT) ───
+nodevice    ahci                    # SATA
+nodevice    mvs                     # Marvell SATA
+nodevice    siis                    # SiI SATA
+nodevice    cd                      # SCSI/ATAPI CD-ROM
+nodevice    ch                      # SCSI media changer
+nodevice    sa                      # SCSI tape
+nodevice    ses                     # SCSI enclosure services
+nodevice    nvme                    # no NVMe on this model (re-add for one that has it)
+nodevice    nvd
+# KEEP: scbus + da + pass  -- USB mass storage rides the CAM layer.
+
+# ── RAID / HBA controllers this box never has ──────────────────────────
+nodevice    mpr
+nodevice    mps
+nodevice    mpt
+nodevice    aac
+nodevice    aacraid
+nodevice    mfi
+nodevice    twa
+nodevice    twe
+nodevice    isci
+
+# ── Wired NICs other than the onboard Realtek (re) ─────────────────────
+nodevice    em                      # Intel PRO/1000
+nodevice    igb
+nodevice    ix
+nodevice    ixl
+nodevice    bxe
+nodevice    bge
+nodevice    bce
+nodevice    msk
+nodevice    nfe
+nodevice    sge
+nodevice    alc
+nodevice    ale
+nodevice    ae
+nodevice    dc
+nodevice    fxp
+nodevice    vr
+nodevice    xl
+# KEEP: re + miibus + ether.
+
+# ── Legacy / absent buses & ports ──────────────────────────────────────
+nodevice    firewire
+nodevice    sbp
+nodevice    fwe
+nodevice    fwip
+nodevice    cbb                     # CardBus / PCMCIA bridge
+nodevice    pccard
+nodevice    cardbus
+nodevice    ppc                     # parallel port
+nodevice    ppbus
+nodevice    lpt
+nodevice    plip
+nodevice    ppi
+
+# ── Audio: KEEP the sound framework + Intel HDA (snd_hda). HDMI audio on this
+#    platform is carried over HDA (the i915 GPU exposes an HDMI audio codec on
+#    the HD-Audio bus), so snd_hda is needed for any future audio-over-HDMI
+#    content. Drop only the discrete PCI sound cards this box does not have. ──
+nodevice    snd_cmi                 # C-Media
+nodevice    snd_csa                 # Crystal Semiconductor
+nodevice    snd_emu10kx             # Creative SB Live!/Audigy
+nodevice    snd_es137x              # Ensoniq AudioPCI
+nodevice    snd_ich                 # Intel AC'97 (this box uses HDA, not AC'97)
+nodevice    snd_via8233             # VIA
+# KEEP: device sound + device snd_hda  -> HDMI audio (future audio content)
+
+# ── Other unused subsystems ────────────────────────────────────────────
+nodevice    ctl                     # CAM target layer (iSCSI target)
+# NOTE: IPSEC is kept on purpose. Removing IPSEC_SUPPORT breaks NIC drivers
+# that have IPSEC offload hooks (mlx5en references ipsec_accel_*), and the
+# size win is marginal. WireGuard (if_wg module) is independent of it.

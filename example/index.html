@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kioskage Example</title>
+  <style>
+    /* Full-screen, TV-legible. Deliberately dependency-free. */
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: #0b1020; color: #f4f6fb;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      display: flex; flex-direction: column; padding: 4vh 4vw;
+    }
+    header { display: flex; justify-content: space-between; align-items: baseline;
+             border-bottom: 1px solid #26304d; padding-bottom: 2vh; margin-bottom: 4vh; }
+    header h1 { font-size: 4vh; font-weight: 700; }
+    header .key { font-size: 2vh; color: #7c88a8; letter-spacing: .1em; text-transform: uppercase; }
+    .hero { text-align: center; margin: 2vh 0 5vh; }
+    .hero .date { font-size: 6vh; font-weight: 700; line-height: 1.1; }
+    .hero .time { font-size: 11vh; font-weight: 800; font-variant-numeric: tabular-nums;
+                  color: #9fb4ff; line-height: 1.05; margin-top: 1vh; }
+    .holidays { max-width: 60ch; margin: 0 auto; width: 100%; }
+    .holidays h2 { font-size: 2.6vh; color: #9fb4ff; margin-bottom: 2vh; text-align: center; }
+    .holidays ul { list-style: none; display: flex; flex-direction: column; gap: 1.4vh; }
+    .holidays li { display: flex; justify-content: space-between; font-size: 2.8vh;
+                   border-bottom: 1px dashed #26304d; padding-bottom: 1.4vh; }
+    .holidays li .when { color: #7c88a8; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 2ch; }
+    .holidays .note { color: #7c88a8; font-size: 2.2vh; text-align: center; }
+    footer { margin-top: auto; text-align: center; font-size: 1.8vh; color: #4a5678; padding-top: 3vh; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1 id="title">Kioskage</h1>
+    <span class="key" id="keyLabel"></span>
+  </header>
+
+  <section class="hero">
+    <div class="date" id="date">&hellip;</div>
+    <div class="time" id="time">&hellip;</div>
+  </section>
+
+  <section class="holidays" id="holidays" hidden>
+    <h2 id="holidaysTitle">Upcoming public holidays</h2>
+    <ul id="holidayList"></ul>
+    <p class="note" id="holidayNote" hidden></p>
+  </section>
+
+  <footer>Powered by kioskage — content-side demo</footer>
+
+  <!-- Per-kiosk config (switches on ?key=). Sets window.KIOSK_CONFIG. -->
+  <script src="config.js"></script>
+
+  <script>
+  (function () {
+    "use strict";
+    var cfg = window.KIOSK_CONFIG || {};
+    document.getElementById("title").textContent = cfg.title || "Kioskage";
+    document.getElementById("keyLabel").textContent = cfg.key ? "key: " + cfg.key : "";
+
+    // ── Date + clock (localized, no dependencies) ────────────────────────
+    var dateFmt = new Intl.DateTimeFormat(undefined,
+      { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+    function renderClock() {
+      var now = new Date();
+      document.getElementById("date").textContent = dateFmt.format(now);
+      document.getElementById("time").textContent = now.toLocaleTimeString();
+    }
+    renderClock();
+    setInterval(renderClock, 1000);
+
+    // ── Upcoming public holidays (optional, graceful) ────────────────────
+    // Fetched from a CORS-enabled JSON API. On failure we fall back to a cached
+    // copy, then hide the panel — the date/clock always render.
+    var holEl = document.getElementById("holidays");
+    var listEl = document.getElementById("holidayList");
+    var noteEl = document.getElementById("holidayNote");
+    var CACHE_KEY = "kioskage.holidays." + (cfg.country || "none");
+    var whenFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+
+    function render(items) {
+      var now = Date.now();
+      var up = items
+        .map(function (h) { return { name: h.localName || h.name, t: Date.parse(h.date) }; })
+        .filter(function (h) { return h.t && h.t >= now - 864e5; })
+        .sort(function (a, b) { return a.t - b.t; })
+        .slice(0, 8);
+      if (!up.length) { holEl.hidden = true; return; }
+      listEl.innerHTML = "";
+      up.forEach(function (h) {
+        var li = document.createElement("li");
+        var name = document.createElement("span"); name.textContent = h.name;
+        var when = document.createElement("span"); when.className = "when";
+        when.textContent = whenFmt.format(new Date(h.t));
+        li.appendChild(name); li.appendChild(when); listEl.appendChild(li);
+      });
+      holEl.hidden = false;
+    }
+    function loadHolidays() {
+      if (!cfg.showHolidays || !cfg.holidaysUrl) { holEl.hidden = true; return; }
+      fetch(cfg.holidaysUrl, { cache: "no-store" })
+        .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+        .then(function (items) {
+          try { localStorage.setItem(CACHE_KEY, JSON.stringify(items)); } catch (e) {}
+          render(items);
+        })
+        .catch(function () {
+          var cached = null;
+          try { cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null"); } catch (e) {}
+          if (cached && cached.length) {
+            render(cached);
+            noteEl.textContent = "(showing last saved list — feed unreachable)";
+            noteEl.hidden = false;
+          } else {
+            holEl.hidden = true; // never block the date on a missing feed
+          }
+        });
+    }
+    loadHolidays();
+    setInterval(loadHolidays, 3600000); // refresh hourly
+  })();
+  </script>
+
+  <!-- kioskage content-side helper: offline SW + change-only reload + keep-alive. -->
+  <script src="../js/kioskage.js"></script>
+  <script>
+    Kioskage.init({
+      version:    "2026-07-17.1",   // must match version.json; bump to force a reload
+      versionUrl: "version.json",
+      swUrl:      "sw.js"
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Display</title>
+  <style>
+    /* Full-screen, TV-legible from across a room. Deliberately self-contained
+       (no shared stylesheet) so this splash renders even mid-reconfigure. */
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: #0b1020;
+      color: #f4f6fb;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      display: flex; align-items: center; justify-content: center;
+      text-align: center; padding: 4vh 4vw;
+    }
+    .wrap { max-width: 1100px; width: 100%; }
+    .logo { height: 9vh; max-height: 90px; margin-bottom: 3vh; opacity: .95; }
+    .lead { font-size: 3.2vh; font-weight: 600; color: #9fb4ff; margin-bottom: 4vh; }
+    .grid {
+      display: flex; gap: 6vw; align-items: center; justify-content: center;
+      flex-wrap: wrap;
+    }
+    .qrbox {
+      background: #fff; border-radius: 16px; padding: 2.4vh;
+      display: inline-flex;
+    }
+    .qrbox img { width: 34vh; height: 34vh; max-width: 320px; max-height: 320px; display: block; }
+    .info { text-align: left; min-width: 40ch; }
+    .info .label { font-size: 2.2vh; text-transform: uppercase; letter-spacing: .12em; color: #7c88a8; }
+    .info .addr { font-size: 5.2vh; font-weight: 700; word-break: break-all; line-height: 1.1; margin: .3vh 0 3vh; }
+    .info .ip { font-size: 4.4vh; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .msg { font-size: 2.6vh; color: #c4cde6; margin-top: 5vh; min-height: 3.2vh; }
+    .count { font-size: 2.2vh; margin-top: 1.2vh; min-height: 2.6vh; color: #7c88a8; }
+    code { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <img src="/logo.png" alt="" class="logo" onerror="this.style.display='none'">
+    <p class="lead" id="lead">This display is online.</p>
+    <div class="grid">
+      <div class="qrbox"><img id="qr" src="/qr.svg" alt="Scan to open setup"></div>
+      <div class="info">
+        <div class="label">Web address</div>
+        <div class="addr" id="addr">&hellip;</div>
+        <div class="label">IP address</div>
+        <div class="ip" id="ip">&hellip;</div>
+      </div>
+    </div>
+    <p class="msg" id="msg"></p>
+    <p class="count" id="count"></p>
+  </div>
+  <script src="/landing.js"></script>
+</body>
+</html>

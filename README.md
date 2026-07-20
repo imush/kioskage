@@ -8,9 +8,9 @@ FreeBSD; designed to be flashed onto cheap mini-PCs and left on a wall.
 **The content is the product; the stick is just the delivery mechanism.**
 kioskage is the delivery mechanism, open-sourced — bring your own content.
 
-> Status: extraction in progress from a working private deployment. The
-> content-side tools (`js/`) and `example/` are ready; the appliance code is
-> being de-branded behind `etc/brand.conf`.
+> **[kioskage.org](https://kioskage.org)** · Running in production. The appliance
+> is fully de-branded behind `etc/brand.conf` — bring a private overlay for your
+> fleet. Questions: [support@kioskage.org](mailto:support@kioskage.org).
 
 ## What's here
 

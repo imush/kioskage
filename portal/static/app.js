@@ -134,7 +134,51 @@ function updateStatus(s) {
   } else {
     banner.classList.add("hidden");
   }
+  updateAuth(s);
 }
+
+// ---- Portal lock (login gate + set-password affordance) ------------------
+function updateAuth(s) {
+  const locked = s.auth_required && !s.authed;
+  $("authPanel").classList.toggle("hidden", !locked);
+  if (locked) {
+    // A password is set and this browser isn't logged in: gate everything.
+    $("configForm").classList.add("hidden");
+    const sp = $("setupPanel"); if (sp) sp.classList.add("hidden");
+    $("securityRow").classList.add("hidden");
+    return;
+  }
+  // Unlocked (open stick) or logged in: offer the set/change-password row when
+  // the config form is on screen. In content-auth mode the password lives on
+  // the content server, so hide the local set-password affordance.
+  const configVisible = !$("configForm").classList.contains("hidden");
+  $("securityRow").classList.toggle("hidden", !configVisible);
+  $("logoutLink").classList.toggle("hidden", !s.authed);
+  $("lockToggle").classList.toggle("hidden", s.auth_mode === "content");
+}
+
+$("authLogin").addEventListener("click", () => {
+  api.post("/api/auth/login", { password: $("authPw").value }).then((r) => {
+    if (r.ok) { $("authPw").value = ""; $("authErr").classList.add("hidden"); refreshStatus(); }
+    else { $("authErr").classList.remove("hidden"); }
+  });
+});
+$("authPw").addEventListener("keydown", (e) => { if (e.key === "Enter") $("authLogin").click(); });
+$("lockToggle").addEventListener("click", (e) => {
+  e.preventDefault(); $("lockForm").classList.toggle("hidden");
+});
+$("setPw").addEventListener("click", () => {
+  api.post("/api/auth/set-password", { password: $("newPw").value }).then((r) => {
+    $("newPw").value = "";
+    $("pwMsg").textContent = !r.ok ? "Failed."
+      : (r.auth_required ? "Password set — display locked." : "Lock removed.");
+    refreshStatus();
+  });
+});
+$("logoutLink").addEventListener("click", (e) => {
+  e.preventDefault();
+  api.post("/api/auth/logout", {}).then(() => refreshStatus());
+});
 
 // ---- Brand (from /api/status; no brand text is baked into the page) ------
 function applyBrand(s) {

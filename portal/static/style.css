@@ -104,3 +104,15 @@ button.ghost { background: var(--bg); color: var(--fg); border: 1px solid var(--
   animation: spin .8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Portal lock */
+.auth { text-align: center; padding: 1.5rem 0; }
+.auth h2 { margin-bottom: .5rem; }
+.auth input { margin: .75rem 0; }
+.err { color: var(--err); }
+.security { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--line);
+            font-size: .85rem; }
+.security a { color: var(--muted); margin-right: 1.25rem; text-decoration: none; }
+.security a:hover { text-decoration: underline; }
+#lockForm { margin-top: .75rem; }
+#pwMsg { margin-left: .75rem; }

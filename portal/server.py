@@ -13,12 +13,23 @@ connected over the AP survive the moment the AP is torn down on success.
 
 import json
 import os
+import secrets
 import ssl
 import threading
+import time
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 import kioskagectl as ctl
+
+# In-memory portal sessions: token -> expiry epoch. Cleared on restart (a small
+# re-login cost). The portal is only locked once a credential is set; until then
+# every request is allowed (grandfathered), so the lock can never strand a stick.
+_SESSIONS = {}
+_SESSIONS_LOCK = threading.Lock()
+SESSION_TTL = int(os.environ.get("KIOSKAGE_SESSION_TTL", "3600"))  # 1 hour
+COOKIE_NAME = "kioskage_session"
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 PORT = int(os.environ.get("KIOSKAGE_PORT", "80"))
@@ -92,12 +103,14 @@ class Handler(BaseHTTPRequestHandler):
         pass  # quiet; production logs go to syslog via the service wrapper
 
     # -- helpers ---------------------------------------------------------
-    def _json(self, obj, code=200):
+    def _json(self, obj, code=200, cookie=None):
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
         self.end_headers()
         self.wfile.write(body)
 
@@ -109,6 +122,51 @@ class Handler(BaseHTTPRequestHandler):
             return json.loads(self.rfile.read(length).decode())
         except Exception:
             return {}
+
+    # -- auth / sessions -------------------------------------------------
+    def _cookie_token(self):
+        raw = self.headers.get("Cookie")
+        if not raw:
+            return None
+        try:
+            morsel = SimpleCookie(raw).get(COOKIE_NAME)
+            return morsel.value if morsel else None
+        except Exception:
+            return None
+
+    def _authed(self):
+        tok = self._cookie_token()
+        if not tok:
+            return False
+        with _SESSIONS_LOCK:
+            exp = _SESSIONS.get(tok)
+            if exp and exp > time.time():
+                return True
+            _SESSIONS.pop(tok, None)
+        return False
+
+    def _issue_session(self):
+        tok = secrets.token_urlsafe(32)
+        with _SESSIONS_LOCK:
+            _SESSIONS[tok] = time.time() + SESSION_TTL
+        secure = "; Secure" if isinstance(self.connection, ssl.SSLSocket) else ""
+        return "%s=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d%s" % (
+            COOKIE_NAME, tok, SESSION_TTL, secure)
+
+    def _drop_session(self):
+        tok = self._cookie_token()
+        if tok:
+            with _SESSIONS_LOCK:
+                _SESSIONS.pop(tok, None)
+
+    def _require_auth(self):
+        """Gate config-changing actions: allowed when the portal is unlocked
+        (no credential set yet) or the request carries a valid session."""
+        if not ctl.auth_configured() or self._authed():
+            return True
+        self._json({"ok": False, "reason": "authentication required",
+                    "auth_required": True}, code=401)
+        return False
 
     def _qr(self):
         # A scannable QR of the address a phone should open to reach the portal.
@@ -150,7 +208,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/api/status":
-            return self._json(ctl.status())
+            s = ctl.status()
+            s["authed"] = self._authed()   # is THIS request logged in?
+            return self._json(s)
         if path == "/api/scan":
             return self._json({"networks": ctl.scan_wifi()})
         if path == "/api/connect/status":
@@ -169,7 +229,32 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         body = self._body_json()
+
+        # --- auth (login is the way IN, so it is never gated) ---
+        if path == "/api/auth/login":
+            if ctl.check_password(body.get("password", "")):
+                return self._json({"ok": True}, cookie=self._issue_session())
+            return self._json({"ok": False, "reason": "wrong password"}, code=401)
+        if path == "/api/auth/logout":
+            self._drop_session()
+            return self._json({"ok": True})
+        if path == "/api/auth/set-password":
+            # Set/rotate the device password. Once locked you must be logged in
+            # to change it (so a LAN attacker can't overwrite the password).
+            if not self._require_auth():
+                return
+            pw = body.get("password", "")
+            ctl.set_device_password(pw)
+            # Log this browser in when a password was just set, so setting a lock
+            # on an open stick doesn't immediately lock the setter out.
+            cookie = self._issue_session() if pw else None
+            return self._json({"ok": True, "auth_required": ctl.auth_configured()},
+                              cookie=cookie)
+
+        # --- config-changing actions: gated once a credential is set ---
         if path == "/api/connect":
+            if not self._require_auth():
+                return
             with _attempt_lock:
                 if _attempt["state"] == "running":
                     return self._json({"ok": False,
@@ -179,15 +264,21 @@ class Handler(BaseHTTPRequestHandler):
                              daemon=True).start()
             return self._json({"ok": True, "state": "running"})
         if path == "/api/landing/done":
-            # The on-screen landing page has finished showing the address/QR and
-            # is advancing to content; drop the hold so the next launch is brief.
+            # Called by the on-screen landing page (the TV's own browser, which
+            # has no session) to drop the hold; benign, so left ungated.
             ctl.clear_landing_hold()
             return self._json({"ok": True})
         if path == "/api/kiosk/start":
+            if not self._require_auth():
+                return
             return self._json(ctl.kiosk_start(body.get("url")))
         if path == "/api/kiosk/stop":
+            if not self._require_auth():
+                return
             return self._json(ctl.kiosk_stop())
         if path == "/api/kiosk/restart":
+            if not self._require_auth():
+                return
             ctl.kiosk_stop()
             return self._json(ctl.kiosk_start(body.get("url")))
         return self._json({"error": "not found"}, code=404)

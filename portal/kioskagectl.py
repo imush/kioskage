@@ -15,6 +15,9 @@ commands simply won't exist, so functions that shell out will report errors
 rather than crash the interpreter.
 """
 
+import base64
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -27,6 +30,10 @@ import time
 # --------------------------------------------------------------------------
 
 CONF_PATH = os.environ.get("KIOSKAGE_CONF", "/usr/local/etc/kioskage.conf")
+# Cached portal credentials (PHC-format PBKDF2 hashes). Root-only; the kiosk
+# (Chromium) user must never read it. Holds a "device" credential (local-mode
+# password, or the adopted kiosk-key password) and an optional "master".
+AUTH_PATH = os.environ.get("KIOSKAGE_AUTH", "/usr/local/etc/kioskage-auth")
 RUN_DIR = os.environ.get("KIOSKAGE_RUN", "/var/run/kioskage")
 WPA_CONF = os.path.join(RUN_DIR, "wpa_supplicant.conf")
 HOSTAPD_CONF = os.path.join(RUN_DIR, "hostapd.conf")
@@ -62,6 +69,10 @@ _BRAND_DEFAULTS = {
     "HOSTNAME_PREFIX": "kiosk",
     "SETUP_SSID": "kiosk",
     "SETUP_PSK": "kiosksetup",
+    # Portal auth: when set, the portal validates a kiosk key + password against
+    # this endpoint (content-validated mode) and caches the result for offline
+    # use. Empty -> local-password mode (the operator sets a device password).
+    "AUTH_URL": "",
 }
 
 
@@ -124,6 +135,118 @@ def kiosk_url(key):
     if not KIOSK_URL_BASE:
         return DEFAULT_URL
     return "%s?key=%s" % (KIOSK_URL_BASE, key) if key else KIOSK_URL_BASE
+
+
+# --------------------------------------------------------------------------
+# Portal authentication (credential storage + verification)
+# --------------------------------------------------------------------------
+#
+# The portal locks config-changing actions behind a password once one is set.
+# Credentials are stored as salted PBKDF2 hashes in PHC string format under
+# AUTH_PATH (root-only) so a stolen stick can't have weak passwords brute-forced
+# quickly, and offline validation needs no plaintext.
+#
+# Two slots: "device" (the local-mode password, or the adopted kiosk-key
+# password) and "master" (a super-admin credential pushed by the content server
+# in content-validated mode). Verification accepts either. If NEITHER slot is
+# set the portal is OPEN (grandfathered) — so an update can never lock anyone
+# out of a stick they cannot otherwise reach.
+
+_PBKDF2_ITERS = 200000    # PBKDF2-HMAC-SHA256 rounds for stick-generated hashes
+
+
+def hash_password(password, iterations=_PBKDF2_ITERS):
+    """Return a PHC string: $pbkdf2-sha256$<iters>$<b64salt>$<b64hash>."""
+    salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    enc = lambda x: base64.b64encode(x).decode("ascii")
+    return "$pbkdf2-sha256$%d$%s$%s" % (iterations, enc(salt), enc(dk))
+
+
+def verify_password(password, phc):
+    """Constant-time check of a password against a stored PHC hash."""
+    try:
+        parts = phc.split("$")          # ["", "pbkdf2-sha256", iters, salt, hash]
+        if len(parts) != 5 or parts[1] != "pbkdf2-sha256":
+            return False
+        salt = base64.b64decode(parts[3])
+        expected = base64.b64decode(parts[4])
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"),
+                                 salt, int(parts[2]))
+        return hmac.compare_digest(dk, expected)
+    except Exception:
+        return False
+
+
+def load_creds():
+    """Read the cached credential slots ({} if none/unreadable)."""
+    try:
+        with open(AUTH_PATH) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def save_creds(creds):
+    """Write credential slots atomically, root-only (0600)."""
+    os.makedirs(os.path.dirname(AUTH_PATH), exist_ok=True)
+    tmp = AUTH_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(creds, f)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, AUTH_PATH)
+
+
+def auth_configured():
+    """True if any credential is set (=> the portal is locked). No credential
+    means an open, grandfathered portal (never lock out on upgrade)."""
+    creds = load_creds()
+    return bool(creds.get("device") or creds.get("master"))
+
+
+def check_password(password):
+    """True if the password matches the device OR master credential (offline /
+    default local validation)."""
+    if not password:
+        return False
+    creds = load_creds()
+    for slot in ("device", "master"):
+        phc = creds.get(slot)
+        if phc and verify_password(password, phc):
+            return True
+    return False
+
+
+def set_device_password(password):
+    """Set/replace the device credential (local-password mode, or adopting a
+    validated kiosk-key password). Empty password clears it (re-opens)."""
+    creds = load_creds()
+    if password:
+        creds["device"] = hash_password(password)
+    else:
+        creds.pop("device", None)
+    save_creds(creds)
+
+
+def set_master_credential(phc):
+    """Cache the master credential hash pushed by the content server (already a
+    PHC string). Falsy clears it."""
+    creds = load_creds()
+    if phc:
+        creds["master"] = phc
+    else:
+        creds.pop("master", None)
+    save_creds(creds)
+
+
+def clear_creds():
+    """Forget all cached credentials (re-opens the portal); used by
+    factory_reset so a wiped stick starts open again."""
+    try:
+        os.remove(AUTH_PATH)
+    except FileNotFoundError:
+        pass
 
 ETH_PREFIXES = ("em", "igb", "igc", "ix", "re", "bge", "alc", "ale",
                 "msk", "nfe", "ue", "cdce", "rue", "axge", "mos")
@@ -635,6 +758,10 @@ def status():
         "logo": BRAND["LOGO"],
         "kiosk_key_enabled": bool(KIOSK_URL_BASE),
         "content_url_base": KIOSK_URL_BASE,
+        # Portal lock: True once a password is set. auth_mode tells the UI
+        # whether to offer a "set password" prompt (local) or not (content).
+        "auth_required": auth_configured(),
+        "auth_mode": "content" if BRAND["AUTH_URL"] else "local",
         "version": app_version(),
         "hostname": host,
         "mdns": host + ".local" if host else None,
@@ -819,6 +946,7 @@ def factory_reset():
             os.remove(p)
         except FileNotFoundError:
             pass
+    clear_creds()   # a wiped stick re-opens (physical reset = the auth bypass)
     host = set_hostname(gen_hostname())
     return {"ok": True, "hostname": host}
 

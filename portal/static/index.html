@@ -16,6 +16,15 @@
 
     <p class="conn-banner hidden" id="connBanner"></p>
 
+    <!-- Portal lock: shown when a password is set and this browser isn't logged in. -->
+    <section id="authPanel" class="auth hidden">
+      <h2>🔒 This display is locked</h2>
+      <p class="muted">Enter the admin password to change its settings.</p>
+      <input type="password" id="authPw" placeholder="Admin password" autocomplete="off">
+      <p class="err hidden" id="authErr">Wrong password.</p>
+      <button type="button" id="authLogin" class="primary">Unlock</button>
+    </section>
+
     <section id="setupPanel" class="setup hidden">
       <h2 id="setupTitle">Set up this display</h2>
       <div id="setupConnect">
@@ -99,6 +108,18 @@
       </div>
     </section>
     </div><!-- /configForm -->
+
+    <!-- Security: set/change/remove the admin password. Shown when unlocked
+         (open stick) or logged in; hidden on the login screen. -->
+    <section id="securityRow" class="security hidden">
+      <a href="#" id="lockToggle" class="muted">🔒 Set / change admin password</a>
+      <a href="#" id="logoutLink" class="muted hidden">Log out</a>
+      <div id="lockForm" class="hidden">
+        <input type="password" id="newPw" placeholder="New password (leave blank to remove the lock)" autocomplete="off">
+        <button type="button" id="setPw" class="ghost">Save password</button>
+        <span id="pwMsg" class="muted"></span>
+      </div>
+    </section>
   </main>
   <script src="/app.js"></script>
 </body>

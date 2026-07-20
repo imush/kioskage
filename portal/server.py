@@ -232,7 +232,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # --- auth (login is the way IN, so it is never gated) ---
         if path == "/api/auth/login":
-            if ctl.check_password(body.get("password", "")):
+            if ctl.authenticate(body.get("password", "")):
                 return self._json({"ok": True}, cookie=self._issue_session())
             return self._json({"ok": False, "reason": "wrong password"}, code=401)
         if path == "/api/auth/logout":

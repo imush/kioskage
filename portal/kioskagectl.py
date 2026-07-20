@@ -248,6 +248,84 @@ def clear_creds():
     except FileNotFoundError:
         pass
 
+
+# --- Content-validated mode (AUTH_URL) ------------------------------------
+#
+# When BRAND["AUTH_URL"] is set, the portal validates a kiosk key + password
+# against that endpoint and caches the returned PHC hashes for offline use. The
+# contract (also implemented by example/auth-server):
+#   POST <AUTH_URL> {"key","password"} -> {"ok":true,"creds":{"device":"<phc>",
+#                                            "master":"<phc>"}} | {"ok":false}
+#   POST <AUTH_URL> {"key","sync":true} -> {"ok":true,"creds":{...}}   (adopt)
+# 'creds' (returned on ok) is what the stick caches; 'master' is a super-admin
+# credential valid for any key. sync lets a stick lock itself + cache offline
+# creds without a password (auto-adopt on upgrade).
+
+
+def _auth_post(payload, timeout=8):
+    """POST JSON to AUTH_URL; return the parsed dict, or None on any failure
+    (unreachable, timeout, bad response) so callers can fall back to the cache."""
+    url = BRAND["AUTH_URL"]
+    if not url:
+        return None
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            url, data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def cache_remote_creds(creds):
+    """Cache server-provided PHC hashes (device + master) for offline auth."""
+    if not isinstance(creds, dict):
+        return
+    slot = load_creds()
+    for name in ("device", "master"):
+        if creds.get(name):
+            slot[name] = creds[name]
+    save_creds(slot)
+
+
+def remote_auth(key, password):
+    """Validate key+password against AUTH_URL. Returns True/False when the server
+    answers (caching creds on success), or None when it is unreachable."""
+    resp = _auth_post({"key": key or "", "password": password})
+    if resp is None:
+        return None
+    if resp.get("ok"):
+        cache_remote_creds(resp.get("creds") or {})
+        return True
+    return False
+
+
+def sync_creds():
+    """Content mode: pull the current credential hashes for this stick's key
+    (no password) so the stick locks itself and can validate offline. No-op in
+    local mode or when offline."""
+    if not BRAND["AUTH_URL"]:
+        return
+    resp = _auth_post({"key": load_config().get("KIOSK_KEY", ""), "sync": True})
+    if resp and resp.get("ok"):
+        cache_remote_creds(resp.get("creds") or {})
+
+
+def authenticate(password):
+    """Portal login check. Content mode: validate against the server (refreshing
+    the cache) with an offline fallback to the cached hashes. Local mode: check
+    the cached device/master hash."""
+    if not password:
+        return False
+    if BRAND["AUTH_URL"]:
+        result = remote_auth(load_config().get("KIOSK_KEY", ""), password)
+        if result is not None:
+            return result                 # server decided (cached on success)
+        # offline -> fall through to the cached hashes
+    return check_password(password)
+
 ETH_PREFIXES = ("em", "igb", "igc", "ix", "re", "bge", "alc", "ale",
                 "msk", "nfe", "ue", "cdce", "rue", "axge", "mos")
 
@@ -1080,6 +1158,9 @@ def boot():
     exit_setup_mode()
     set_hostname(cfg.get("HOSTNAME") or gen_hostname())
     ensure_mdns()
+    # Content-validated mode: adopt/refresh this key's credential hashes so the
+    # stick locks itself and can authenticate offline (no-op in local mode).
+    sync_creds()
     if cfg.get("AUTO_START", "yes") == "yes":
         kiosk_start(cfg.get("CONTENT_URL"))
     return {"provisioned": True, "connected": True, "ip": res["ip"]}

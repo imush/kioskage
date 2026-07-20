@@ -121,16 +121,17 @@ sysrc sendmail_enable="NONE" sendmail_submit_enable="NO" \
       sendmail_outbound_enable="NO" sendmail_msp_queue_enable="NO"
 sysrc dumpdev="NO" update_motd="NO"
 
-# Nobody reads local mail on an appliance — stop periodic(8) from mailing its
+# Nobody reads local mail on an appliance, so stop periodic(8) mailing its
 # daily/weekly/monthly output to root (which piles up in /var/mail/root and
-# triggers the "you have mail" nag). Discard the output instead, and clear any
-# mail already queued.
+# triggers the "you have mail" nag). Keep the reports as logs instead of mail —
+# readable over SSH for diagnostics — and clear any mail already queued.
 if ! grep -q '^daily_output=' /etc/periodic.conf 2>/dev/null; then
     cat >> /etc/periodic.conf <<'EOF'
-# Appliance: no mail reader — discard periodic output instead of mailing root.
-daily_output="/dev/null"
-weekly_output="/dev/null"
-monthly_output="/dev/null"
+# Appliance: no mail reader. Keep periodic security/status reports as logs
+# (readable over SSH) rather than mailing root.
+daily_output="/var/log/daily.log"
+weekly_output="/var/log/weekly.log"
+monthly_output="/var/log/monthly.log"
 daily_status_security_inline="YES"
 EOF
 fi

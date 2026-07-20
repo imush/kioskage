@@ -137,17 +137,30 @@ else
     echo "vfs.zfs.arc_max=\"${ARC_MAX}\"" >> /boot/loader.conf
 fi
 
-# Disable a dead SD card-reader controller (e.g. the J3455's Intel SDXC), which
-# never attaches and spews "Bus power failed to enable" + "Controller timeout" +
-# register dumps on every boot, wasting several seconds. We boot from eMMC and
-# never use the SD slot. Matched by description ("SDXC") and disabled by that
-# exact unit, so the eMMC controller is never touched and boards without such a
-# reader simply skip this. Reversible: delete the hint line and reboot.
-sdxc=$(sed -nE 's/^sdhci_pci([0-9]+): <.*SDXC.*/\1/p' /var/run/dmesg.boot 2>/dev/null | head -1)
-[ -z "$sdxc" ] && sdxc=$(dmesg 2>/dev/null | sed -nE 's/^sdhci_pci([0-9]+): <.*SDXC.*/\1/p' | head -1)
-if [ -n "$sdxc" ] && ! grep -q "^hint\.sdhci_pci\.${sdxc}\.disabled=" /boot/loader.conf 2>/dev/null; then
-    log "Disabling dead SDXC card-reader controller (sdhci_pci${sdxc})"
-    echo "hint.sdhci_pci.${sdxc}.disabled=\"1\"" >> /boot/loader.conf
+# Silence a dead SD/MMC host controller that can't power its slot — e.g. the
+# J3455's Intel SDXC card reader, which reports "Bus power failed to enable" and
+# retries into "Controller timeout" + a register dump on every boot, wasting
+# several seconds. Detection is by the ACTUAL FAILURE, not a description or slot
+# number, so it adapts to any hardware:
+#   - a working SD reader never emits this -> left alone (a brand may use it);
+#   - an eMMC/boot controller never emits this -> never touched;
+#   - and as a hard backstop we refuse to disable the unit if the root pool
+#     lives on it, so an SD-card-boot box is never bricked. Worst case: no-op.
+# Reversible per stick: delete the hint line from /boot/loader.conf and reboot.
+boot_log() { cat /var/run/dmesg.boot 2>/dev/null; dmesg 2>/dev/null; }
+dead=$(boot_log | sed -nE 's/^sdhci_pci([0-9]+)-slot[0-9]+: Bus power failed to enable.*/\1/p' | head -1)
+if [ -n "$dead" ]; then
+    # Which sdhci_pci unit does the root pool sit on? (empty if root isn't on mmc)
+    rootpool=$(mount -p 2>/dev/null | awk '$2=="/"{print $1}' | sed 's#/.*##')
+    root_disk=$(zpool status "$rootpool" 2>/dev/null | grep -oE 'mmcsd[0-9]+' | head -1)
+    root_bus=$(boot_log | sed -nE "s/^${root_disk}: .* at (mmc[0-9]+).*/\1/p" | head -1)
+    root_unit=$(boot_log | sed -nE "s|^${root_bus}: <MMC/SD bus> on sdhci_pci([0-9]+).*|\1|p" | head -1)
+    if [ -n "$root_unit" ] && [ "$dead" = "$root_unit" ]; then
+        log "sdhci_pci${dead} is failing but hosts the root disk — NOT disabling"
+    elif ! grep -q "^hint\.sdhci_pci\.${dead}\.disabled=" /boot/loader.conf 2>/dev/null; then
+        log "Disabling failed SD/MMC controller sdhci_pci${dead} (bus power failure)"
+        echo "hint.sdhci_pci.${dead}.disabled=\"1\"" >> /boot/loader.conf
+    fi
 fi
 
 # nss-mdns: make .local resolvable

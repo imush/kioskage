@@ -137,18 +137,20 @@ else
     echo "vfs.zfs.arc_max=\"${ARC_MAX}\"" >> /boot/loader.conf
 fi
 
-# Silence a dead SD/MMC host controller that can't power its slot — e.g. the
-# J3455's Intel SDXC card reader, which reports "Bus power failed to enable" and
-# retries into "Controller timeout" + a register dump on every boot, wasting
-# several seconds. Detection is by the ACTUAL FAILURE, not a description or slot
-# number, so it adapts to any hardware:
-#   - a working SD reader never emits this -> left alone (a brand may use it);
-#   - an eMMC/boot controller never emits this -> never touched;
+# Silence a dead SD/MMC host controller that can't drive its slot — e.g. the
+# J3455's Intel SDXC card reader, which on every boot logs "Bus power failed to
+# enable" and/or retries into "Controller timeout" + a register dump, wasting
+# several seconds. Detection is by the ACTUAL FAILURE (either symptom), not a
+# description or slot number, so it adapts to any hardware:
+#   - a working reader with an empty slot detects "no card" and stays silent, and
+#     a working reader with a card inits it — neither times out, so both are
+#     left alone (a brand may use its SD slot);
+#   - an eMMC/boot controller never emits these -> never touched;
 #   - and as a hard backstop we refuse to disable the unit if the root pool
 #     lives on it, so an SD-card-boot box is never bricked. Worst case: no-op.
 # Reversible per stick: delete the hint line from /boot/loader.conf and reboot.
 boot_log() { cat /var/run/dmesg.boot 2>/dev/null; dmesg 2>/dev/null; }
-dead=$(boot_log | sed -nE 's/^sdhci_pci([0-9]+)-slot[0-9]+: Bus power failed to enable.*/\1/p' | head -1)
+dead=$(boot_log | sed -nE 's/^sdhci_pci([0-9]+)-slot[0-9]+: (Bus power failed to enable|Controller timeout).*/\1/p' | head -1)
 if [ -n "$dead" ]; then
     # Which sdhci_pci unit does the root pool sit on? (empty if root isn't on mmc)
     rootpool=$(mount -p 2>/dev/null | awk '$2=="/"{print $1}' | sed 's#/.*##')

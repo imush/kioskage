@@ -94,7 +94,12 @@ sync_repo() {
   if [ -d "$d/.git" ]; then
     git -C "$d" fetch --quiet origin "$brn"
     b=$(git -C "$d" rev-parse HEAD)
-    git -C "$d" reset --hard --quiet "origin/$brn"
+    # Reset to what we just fetched (FETCH_HEAD) rather than "origin/$brn": a
+    # shallow or single-branch clone — e.g. a migration bootstrap done with
+    # `git clone --depth 1` — has no remote-tracking ref for other channels, so
+    # `reset --hard origin/prod` would fail with "unknown revision". FETCH_HEAD
+    # always points at the branch we just fetched, whatever the clone's refspec.
+    git -C "$d" reset --hard --quiet FETCH_HEAD
     echo "$b $(git -C "$d" rev-parse HEAD)"
   else
     mkdir -p "$(dirname "$d")"; rm -rf "$d"

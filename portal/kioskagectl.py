@@ -865,7 +865,7 @@ def status():
 # --------------------------------------------------------------------------
 
 def provision(mode, ssid=None, psk=None, hostname=None, url=None, key=None,
-              auto_start=True):
+              key_password=None, auto_start=True):
     """Connect, and on success persist config + set hostname + advertise mDNS.
     Returns {ok, reason, ip, hostname, mdns}.
 
@@ -892,10 +892,23 @@ def provision(mode, ssid=None, psk=None, hostname=None, url=None, key=None,
         enter_setup_mode()
         return {"ok": False, "reason": res["reason"]}
 
+    key = (key or "").strip()
+    # Content-validated "claim": prove ownership of the target kiosk key before
+    # switching to it, so you can't strand the stick on a key that doesn't exist
+    # / you don't own. remote_auth caches the key's creds on success (adopting
+    # it). No-op in local mode or with no key.
+    if BRAND["AUTH_URL"] and key:
+        claim = remote_auth(key, key_password or "")
+        if claim is None or not claim:
+            if load_config().get("CONFIGURED") != "yes":
+                enter_setup_mode()   # keep onboarding an unconfigured stick
+            return {"ok": False,
+                    "reason": ("couldn't reach the content server to verify the "
+                               "kiosk key" if claim is None else
+                               "unknown kiosk key, or wrong password for it")}
+
     host = set_hostname(hostname or gen_hostname())
     ensure_mdns()
-
-    key = (key or "").strip()
     content_url = (url or "").strip() or kiosk_url(key)
 
     cfg = load_config()

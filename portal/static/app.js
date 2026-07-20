@@ -151,6 +151,10 @@ function updateAuth(s) {
   // Unlocked (open stick) or logged in: offer the set/change-password row when
   // the config form is on screen. In content-auth mode the password lives on
   // the content server, so hide the local set-password affordance.
+  // Unlocked. For a configured stick, updateSetup() returns early and won't
+  // manage the config form, so re-show it here (it was hidden while locked) —
+  // otherwise the page looks blank right after a successful login.
+  if (s.configured && !s.setup_mode) $("configForm").classList.remove("hidden");
   const configVisible = !$("configForm").classList.contains("hidden");
   $("securityRow").classList.toggle("hidden", !configVisible);
   $("logoutLink").classList.toggle("hidden", !s.authed);
@@ -191,6 +195,9 @@ function applyBrand(s) {
     document.documentElement.style.setProperty("--accent", s.accent_color);
   // Hide the kiosk-key field when there's no content base to build a URL from.
   const kk = $("kioskKey"); if (kk) kk.style.display = s.kiosk_key_enabled ? "" : "none";
+  // Content-validated mode needs the key's password (the "claim") to switch keys.
+  const kkp = $("kioskKeyPw");
+  if (kkp) kkp.classList.toggle("hidden", !(s.kiosk_key_enabled && s.auth_mode === "content"));
 }
 
 // ---- Initial status ------------------------------------------------------
@@ -242,6 +249,7 @@ $("connect").addEventListener("click", () => {
     hostname: $("hostname").value,
     url: $("url").value,
     key: $("kioskKey").value.trim(),
+    key_password: $("kioskKeyPw").value,
     auto_start: $("autostart").checked,
   };
   if (mode === "wifi" && !params.ssid) {

@@ -87,6 +87,7 @@ def _run_attempt(params):
             hostname=params.get("hostname"),
             url=params.get("url"),
             key=params.get("key"),
+            key_password=params.get("key_password"),
             auto_start=bool(params.get("auto_start", True)),
         )
     except Exception as e:  # never let the worker die silently

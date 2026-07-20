@@ -137,6 +137,19 @@ else
     echo "vfs.zfs.arc_max=\"${ARC_MAX}\"" >> /boot/loader.conf
 fi
 
+# Disable a dead SD card-reader controller (e.g. the J3455's Intel SDXC), which
+# never attaches and spews "Bus power failed to enable" + "Controller timeout" +
+# register dumps on every boot, wasting several seconds. We boot from eMMC and
+# never use the SD slot. Matched by description ("SDXC") and disabled by that
+# exact unit, so the eMMC controller is never touched and boards without such a
+# reader simply skip this. Reversible: delete the hint line and reboot.
+sdxc=$(sed -nE 's/^sdhci_pci([0-9]+): <.*SDXC.*/\1/p' /var/run/dmesg.boot 2>/dev/null | head -1)
+[ -z "$sdxc" ] && sdxc=$(dmesg 2>/dev/null | sed -nE 's/^sdhci_pci([0-9]+): <.*SDXC.*/\1/p' | head -1)
+if [ -n "$sdxc" ] && ! grep -q "^hint\.sdhci_pci\.${sdxc}\.disabled=" /boot/loader.conf 2>/dev/null; then
+    log "Disabling dead SDXC card-reader controller (sdhci_pci${sdxc})"
+    echo "hint.sdhci_pci.${sdxc}.disabled=\"1\"" >> /boot/loader.conf
+fi
+
 # nss-mdns: make .local resolvable
 if ! grep -q mdns /etc/nsswitch.conf 2>/dev/null; then
     sed -i '' -e 's/^hosts:.*/hosts: files dns mdns/' /etc/nsswitch.conf \

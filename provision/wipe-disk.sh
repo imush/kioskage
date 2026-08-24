@@ -65,6 +65,9 @@ if [ "$AUTO" = yes ]; then
     [ -z "$DEV" ] || { echo "give a device OR --auto, not both" >&2; exit 2; }
     cand=""
     for d in $DISKS; do
+        # eMMC lists its boot/rpmb areas (mmcsd0boot0/boot1/rpmb) as separate
+        # disks in kern.disks; skip them so one eMMC isn't counted as several.
+        case "$d" in *boot[0-9]|*rpmb) continue ;; esac
         skip=no
         for p in $PROTECTED; do [ "$d" = "$p" ] && skip=yes; done
         [ "$skip" = no ] && cand="$cand $d"

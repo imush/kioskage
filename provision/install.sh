@@ -124,6 +124,15 @@ sysrc avahi_daemon_enable="YES"
 sysrc moused_enable="NO"
 sysrc syslogd_flags="-ss"
 
+# Disable the onboard Realtek rtw88 (e.g. RTL8821C) radio: on FreeBSD 15 it
+# scans but CANNOT associate (EOPNOTSUPP at AUTH, upstream-deferred), and it
+# enumerates before a USB dongle, so it steals wlan0 from a working run(4)
+# dongle. Blocklisting the driver keeps the dead radio out of net.wlan.devices
+# entirely. No-op on units without rtw88 (e.g. onboard Intel iwm). Idempotent.
+# Such units need Ethernet or a tested USB Wi-Fi dongle; see the hardware notes.
+sysrc -n devmatch_blocklist 2>/dev/null | grep -qw if_rtw88 \
+    || sysrc devmatch_blocklist+="if_rtw88"
+
 # Boot-time trim (config-level; no custom kernel): no mail agent, no crash
 # dumps. autoboot_delay is kept at 3s (not 0) so kernel.old stays selectable at
 # the console after a bad kernel update.

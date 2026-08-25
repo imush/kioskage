@@ -532,12 +532,26 @@ _MAC_RE = re.compile(r"([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}")
 
 def ensure_sta_iface():
     """Make sure the station wlan clone exists and is up. Returns iface or
-    None if no wifi hardware is present."""
+    None if no wifi hardware is present.
+
+    Prefers a radio that can actually associate: the onboard Realtek rtw88
+    (e.g. RTL8821C) scans but fails association with EOPNOTSUPP on FreeBSD 15,
+    and it enumerates before a USB dongle, so a naive devs[0] grabs the broken
+    one. If any non-rtw radio is present (e.g. a run(4) RT5370 dongle) use it;
+    fall back to rtw only when it's the only radio."""
     devs = wlan_devices()
     if not devs:
         return None
+    usable = [d for d in devs if not d.startswith("rtw")]
+    want = usable[0] if usable else devs[0]
+    # If wlan0 already exists but is bound to the broken onboard radio while a
+    # working one is now available, rebuild it on the good radio.
+    if STA_IF in all_ifaces() and usable:
+        m = re.search(r"parent interface: (\S+)", out(["ifconfig", STA_IF]))
+        if m and m.group(1).startswith("rtw"):
+            run(["ifconfig", STA_IF, "destroy"])
     if STA_IF not in all_ifaces():
-        run(["ifconfig", STA_IF, "create", "wlandev", devs[0]])
+        run(["ifconfig", STA_IF, "create", "wlandev", want])
     run(["ifconfig", STA_IF, "up"])
     return STA_IF
 

@@ -22,6 +22,16 @@ log() { echo ">>> $*"; }
 [ "$(id -u)" -eq 0 ] || { echo "run as root"; exit 1; }
 
 # --------------------------------------------------------------------------
+# Sanity: the root directory must be world-traversable, else non-root services
+# (the kiosk's X session as the kioskage user, avahi, ntpd) can't reach /bin,
+# /lib, etc. and die with "Permission denied". Some image builders ship / as
+# mode 700; normalize it. Also ensure /etc/fstab exists (a ZFS-root image may
+# omit it, which spams "fstab:0: No such file" during boot).
+# --------------------------------------------------------------------------
+chmod 755 /
+[ -f /etc/fstab ] || : > /etc/fstab
+
+# --------------------------------------------------------------------------
 log "Installing packages"
 # --------------------------------------------------------------------------
 export ASSUME_ALWAYS_YES=yes

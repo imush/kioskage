@@ -331,6 +331,21 @@ def remote_auth(key, password):
     return False
 
 
+def adopt_timezone(tz):
+    """Persist a server-reported IANA zone into this stick's config. Returns True
+    if it changed. Ignores anything the base system does not actually ship, so a
+    bad value on the server cannot break a display's clock."""
+    tz = (tz or "").strip()
+    if not tz or not os.path.exists(os.path.join("/usr/share/zoneinfo", tz)):
+        return False
+    cfg = load_config()
+    if cfg.get("TIMEZONE") == tz:
+        return False
+    cfg["TIMEZONE"] = tz
+    save_config(cfg)
+    return True
+
+
 def sync_creds():
     """Content mode: pull the current credential hashes for this stick's key
     (no password) so the stick locks itself and can validate offline. No-op in
@@ -340,6 +355,11 @@ def sync_creds():
     resp = _auth_post({"key": load_config().get("KIOSK_KEY", ""), "sync": True})
     if resp and resp.get("ok"):
         cache_remote_creds(resp.get("creds") or {})
+        # The server knows where this kiosk is — its key carries the timezone the
+        # calendar itself is rendered with, so adopting it keeps the appliance
+        # clock and the content in agreement, and lets one fleet span cities.
+        # Applied by ensure_timezone() on the next boot.
+        adopt_timezone(resp.get("tz"))
 
 
 def authenticate(password):
@@ -846,7 +866,14 @@ def ensure_timezone():
     Mirrors tzsetup(8): copy the zone file and record the name in
     /var/db/zoneinfo, so it is idempotent and cheap to call on every boot.
     """
-    tz = (BRAND.get("TIMEZONE") or "").strip()
+    # Precedence: the zone this stick was told by the content server (its kiosk
+    # key already carries one — the calendar needs it to render zmanim), then
+    # the brand default, then leave the system alone. A fleet-wide default is
+    # wrong the moment two displays sit in different cities, so the per-stick
+    # value has to win.
+    tz = (load_config().get("TIMEZONE") or "").strip()
+    if not tz:
+        tz = (BRAND.get("TIMEZONE") or "").strip()
     if not tz or tz == "UTC":
         return False
     src = os.path.join("/usr/share/zoneinfo", tz)

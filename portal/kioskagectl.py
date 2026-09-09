@@ -742,6 +742,12 @@ def ensure_ap_iface():
     if AP_IF not in all_ifaces():
         run(["ifconfig", AP_IF, "create", "wlandev", ap_dev, "wlanmode",
              "hostap"])
+    # Verify rather than assume. Creating a hostap vap fails outright on drivers
+    # that do not support it, and on a single-radio unit the station vap already
+    # owns the device — in both cases the create above is a no-op and returning
+    # AP_IF anyway makes every caller believe an AP is serving when none is.
+    if AP_IF not in all_ifaces():
+        return None
     return AP_IF
 
 
@@ -762,6 +768,15 @@ def ap_up(ssid=None):
     run(["ifconfig", iface, "inet", AP_CIDR, "up"])
     run(["hostapd", "-B", HOSTAPD_CONF], timeout=10)
     run(["dnsmasq", "-C", DNSMASQ_CONF], timeout=10)
+    # hostapd -B forks, so a non-zero exit is not reliably reported; check that
+    # it is actually running. Claiming success here is worse than failing: the
+    # setup-mode loop would stop retrying the real network every few seconds and
+    # back off to minutes, waiting on an access point that does not exist.
+    if run(["pgrep", "-f", HOSTAPD_CONF], timeout=5)[0] != 0:
+        ap_down()
+        return {"ok": False,
+                "reason": "hostapd did not start (AP mode unsupported on this "
+                          "radio?)", "ssid": ssid}
     return {"ok": True, "reason": "AP up", "ssid": ssid, "ip": AP_ADDR}
 
 

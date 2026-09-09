@@ -61,6 +61,9 @@ BRAND_PATH = os.environ.get("KIOSKAGE_BRAND",
                             "/usr/local/etc/kioskage-brand.conf")
 
 _BRAND_DEFAULTS = {
+    # IANA zone, e.g. "America/New_York". Empty or UTC leaves the system
+    # default (UTC) alone. See ensure_timezone().
+    "TIMEZONE": "",
     "BRAND_NAME": "Kioskage",
     "ACCENT_COLOR": "#3a6ea5",
     "LOGO": "logo.png",
@@ -828,6 +831,42 @@ def kiosk_stop():
 # mDNS / avahi
 # --------------------------------------------------------------------------
 
+def ensure_timezone():
+    """Point the system clock's zone at BRAND["TIMEZONE"]. Returns True if changed.
+
+    FreeBSD defaults to UTC and install.sh never sets a zone, so "0 3 * * *" — the
+    nightly update cron — actually fired at 03:00 UTC, which is 23:00 US/Eastern.
+    Every log timestamp was UTC too, which quietly misleads anyone reading
+    setup.log against a wall clock while standing in front of a broken display.
+
+    This lives here, not in install.sh, because it has to reach sticks already in
+    the field: apply.sh deliberately never touches crontabs or rc.conf, so the
+    cron LINE cannot be changed by an update — but the meaning of 03:00 can.
+
+    Mirrors tzsetup(8): copy the zone file and record the name in
+    /var/db/zoneinfo, so it is idempotent and cheap to call on every boot.
+    """
+    tz = (BRAND.get("TIMEZONE") or "").strip()
+    if not tz or tz == "UTC":
+        return False
+    src = os.path.join("/usr/share/zoneinfo", tz)
+    if not os.path.exists(src):
+        return False
+    try:
+        if io.open("/var/db/zoneinfo").read().strip() == tz:
+            return False
+    except OSError:
+        pass
+    run(["cp", src, "/etc/localtime"], timeout=10)
+    try:
+        os.makedirs("/var/db", exist_ok=True)
+        with open("/var/db/zoneinfo", "w") as f:
+            f.write(tz + "\n")
+    except OSError:
+        pass
+    return True
+
+
 def ensure_mdns():
     run(["service", "dbus", "onestart"], timeout=10)
     run(["service", "avahi-daemon", "onestart"], timeout=10)
@@ -1282,6 +1321,9 @@ def maybe_update():
 
 def boot():
     cfg = load_config()
+    # Before anything logs: get the clock's zone right, so timestamps in
+    # setup.log and kioskage-update.log match the wall clock at the site.
+    ensure_timezone()
     ensure_mdns()
     # A fresh boot is not a provision hand-off: show the address only briefly.
     clear_landing_hold()

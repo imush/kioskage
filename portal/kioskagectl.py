@@ -1124,6 +1124,30 @@ def try_setup_hotspot():
     return False
 
 
+def resume_after_recovery():
+    """Finish what boot() would have done, for a CONFIGURED stick that has just
+    healed its own network from inside setup_watch().
+
+    The setup screen exists to be driven by a person, so the original loop only
+    had to get the network up and stop there. A stick that recovers on its own
+    has no person: without this it sits on the setup screen with a perfectly
+    good network, which looks identical to still being broken.
+    """
+    cfg = load_config()
+    exit_setup_mode()
+    set_hostname(cfg.get("HOSTNAME") or gen_hostname())
+    ensure_mdns()
+    sync_creds()
+    if cfg.get("AUTO_START", "yes") == "yes":
+        # Chromium is already up on the setup portal, and rc.d's "kiosk" command
+        # is a no-op while it is running — so stop it first, or the display
+        # never leaves the setup screen even though everything else recovered.
+        kiosk_stop()
+        kiosk_start(cfg.get("CONTENT_URL"))
+    maybe_update()
+    _setup_log("recovered — left setup mode, kiosk back on content")
+
+
 def setup_watch():
     """Background loop while the stick has no usable network: bring up whatever
     the user provides — a saved network that has come back, an Ethernet cable
@@ -1155,6 +1179,11 @@ def setup_watch():
                 ap_down()                            # a real network wins
                 ap_active = False
                 _setup_log("network back — AP fallback torn down")
+            if load_config().get("CONFIGURED") == "yes":
+                resume_after_recovery()              # nobody else will
+                return
+            # Unconfigured: stay put. The portal is reachable now and an
+            # operator still has to choose a network and a content URL.
             cycles += 1
             time.sleep(SETUP_POLL)
             continue

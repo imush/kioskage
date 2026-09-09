@@ -228,6 +228,9 @@ log "Installing OTA updater"
 install -m 755 "$REPO_DIR/bin/kioskage-update" "$PREFIX/sbin/kioskage-update"
 _cron=$(mktemp)
 crontab -l 2>/dev/null | grep -v kioskage-update > "$_cron" || true
+# NOTE: the appliance sets no timezone, so it runs on UTC — this fires at
+# 03:00 UTC, which is 23:00 US/Eastern in summer, not 03:00 local. Worth
+# knowing before waiting up to watch a fleet update land.
 echo "0 3 * * * $PREFIX/sbin/kioskage-update --kiosk >/var/log/kioskage-update.log 2>&1" >> "$_cron"
 crontab "$_cron"; rm -f "$_cron"
 

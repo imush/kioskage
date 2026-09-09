@@ -120,6 +120,27 @@ SETUP_ASSOC = 10        # per-network association timeout while password-scannin
 SETUP_MAX_TRY = 6       # secured networks to try per scan cycle
 SETUP_RETRY_CYCLES = 8  # every N cycles, forget failures and re-try everything
 
+# Self-healing while in setup mode. A stick whose saved network is unreachable
+# has no other retry path, so this loop is its only way back: it re-tries the
+# saved network and a cable, then a setup hotspot, and finally serves its own AP
+# so the portal is reachable from a phone with no infrastructure at all.
+AP_FALLBACK_SECS = 180   # no network for this long in setup mode -> raise our own AP
+AP_RETRY_SECS = 300      # while that AP is up, re-probe the real network this often
+
+# Boot: how hard to try the saved network before dropping to setup mode. One
+# attempt turned an ordinary transient (AP still booting, USB wifi dongle not
+# yet enumerated) into a stick that needed a site visit.
+BOOT_NET_TRIES = 3
+BOOT_NET_BACKOFF = 5     # seconds, multiplied by the attempt number
+
+# OTA: the nightly cron only reaches sticks powered on at 03:00, so a site that
+# switches the display off overnight would never update. A boot-time check
+# closes that gap; the stamp keeps a stick that is power-cycled several times a
+# day from re-checking on every boot.
+UPDATER = "/usr/local/sbin/kioskage-update"
+UPDATE_STAMP = "/var/db/kioskage-update.stamp"
+UPDATE_MIN_INTERVAL = 20 * 3600
+
 # Content: the portal's "kiosk key" builds CONTENT_URL_BASE + "?key=<key>" (many
 # kiosks sharing one content site). Empty base -> the key field is hidden and
 # operators paste a full URL. DEFAULT_URL is shown until the stick is configured.
@@ -1104,33 +1125,81 @@ def try_setup_hotspot():
 
 
 def setup_watch():
-    """Background loop while unconfigured: bring up whatever network the user
-    provides — an Ethernet cable the moment it's plugged in, or a phone hotspot
-    with the setup password — so the on-screen portal becomes reachable. Exits
-    once the stick is configured."""
+    """Background loop while the stick has no usable network: bring up whatever
+    the user provides — a saved network that has come back, an Ethernet cable
+    the moment it is plugged in, or a phone hotspot carrying the setup password
+    — so the stick heals itself and the on-screen portal stays reachable.
+
+    Runs for BOTH an unconfigured stick (onboarding) and a configured one whose
+    saved network was unreachable at boot. The second case is the important one:
+    nothing else re-tries a configured stick's network, so before this loop
+    covered it a single failed association stranded the stick until someone
+    visited the site.
+
+    Last resort: with no saved network, no cable and no setup hotspot, raise our
+    own AP so an operator can always reach the portal with just a phone.
+    """
     _setup_log("setup-watch started")
     cycles = 0
-    # Tie our lifetime to setup mode: once provision() leaves setup mode (or the
-    # stick is configured) we must stop touching the radio, so a provision in
-    # flight isn't fought for wlan0.
-    while load_config().get("CONFIGURED") != "yes" and in_setup_mode():
+    started = time.time()
+    last_probe = 0.0
+    ap_active = False
+    # Tie our lifetime to setup mode alone. provision() calls stop_setup_watch()
+    # before it touches the radio and exit_setup_mode() on success, so
+    # in_setup_mode() is the correct and sufficient guard. Also testing
+    # CONFIGURED here is what used to make this loop exit immediately on exactly
+    # the sticks that needed it — a configured stick that had lost its network.
+    while in_setup_mode():
+        if primary_ip():
+            if ap_active:
+                ap_down()                            # a real network wins
+                ap_active = False
+                _setup_log("network back — AP fallback torn down")
+            cycles += 1
+            time.sleep(SETUP_POLL)
+            continue
+
+        # While our own AP is up we must not hijack the radio to scan on every
+        # cycle, or we drop the operator who is mid-setup on it. Re-probe the
+        # real network only every AP_RETRY_SECS.
+        if ap_active and (time.time() - last_probe) < AP_RETRY_SECS:
+            cycles += 1
+            time.sleep(SETUP_POLL)
+            continue
+        if ap_active:
+            ap_down()
+            ap_active = False
+        last_probe = time.time()
+
+        release_stale_ip()                           # drop a dead link's stale IP
+        cfg = load_config()
+        if (cfg.get("CONFIGURED") == "yes"
+                and cfg.get("NET_MODE", "ethernet") == "wifi"):
+            # The saved network may simply be back (router rebooted, radio
+            # enumerated late). Cheapest thing to try, and the only one that
+            # recovers the stick with nobody on site.
+            connect_wifi(cfg.get("WIFI_SSID"), cfg.get("WIFI_PSK"))
         if not primary_ip():
-            release_stale_ip()                       # drop a dead link's stale IP
-            connect_ethernet()                       # cable, the moment it's live
-            # Re-check just before we hijack the radio: a provision() may have
-            # started (and left setup mode) while we were connecting/scanning.
-            if not primary_ip() and in_setup_mode():
-                if cycles % SETUP_RETRY_CYCLES == 0 and cycles:
-                    _setup_tried.clear()             # periodically re-try everything
-                    _setup_log("re-trying all networks")
-                try_setup_hotspot()
-            if primary_ip():
-                _setup_log("network up: %s" % primary_ip())
-                _setup_tried.clear()
-                ensure_mdns()
+            connect_ethernet()                       # cable, the moment it is live
+        # Re-check just before we hijack the radio: a provision() may have
+        # started (and left setup mode) while we were connecting/scanning.
+        if not primary_ip() and in_setup_mode():
+            if cycles % SETUP_RETRY_CYCLES == 0 and cycles:
+                _setup_tried.clear()                 # periodically re-try everything
+                _setup_log("re-trying all networks")
+            try_setup_hotspot()
+        if primary_ip():
+            _setup_log("network up: %s" % primary_ip())
+            _setup_tried.clear()
+            ensure_mdns()
+        elif in_setup_mode() and (time.time() - started) >= AP_FALLBACK_SECS:
+            r = ap_up()
+            ap_active = bool(r.get("ok"))
+            _setup_log("AP fallback: %s" % r.get("reason"))
+
         cycles += 1
         time.sleep(SETUP_POLL)
-    _setup_log("configured — setup-watch exiting")
+    _setup_log("left setup mode — setup-watch exiting")
 
 
 def start_setup_watch():
@@ -1148,6 +1217,32 @@ def stop_setup_watch():
     back on the hotspot instead of the network the user just chose)."""
     run(["pkill", "-f", "kioskagectl.*setup-watch"], timeout=5)
     time.sleep(0.5)  # let it die before we touch wlan0
+
+
+def maybe_update():
+    """Kick off an OTA check just after a successful boot, at most once per
+    UPDATE_MIN_INTERVAL. Returns True if an attempt was started.
+
+    Runs detached so it never holds up the boot sequence or the kiosk launch,
+    and is cheap when there is nothing to do: the updater exits before applying
+    anything if neither repo moved, so a healthy stick is not restarted. When an
+    update does apply, the updater health-checks it and rolls back on failure.
+    """
+    if not os.path.exists(UPDATER):
+        return False
+    try:
+        if (time.time() - os.path.getmtime(UPDATE_STAMP)) < UPDATE_MIN_INTERVAL:
+            return False
+    except OSError:
+        pass                      # no stamp yet — this is the first such check
+    try:
+        os.makedirs(os.path.dirname(UPDATE_STAMP), exist_ok=True)
+        open(UPDATE_STAMP, "w").close()
+    except OSError:
+        pass
+    run(["daemon", "-f", "/bin/sh", "-c",
+         "%s --kiosk >>/var/log/kioskage-update.log 2>&1" % UPDATER], timeout=10)
+    return True
 
 
 # --------------------------------------------------------------------------
@@ -1170,10 +1265,19 @@ def boot():
         return {"provisioned": False, "setup": True}
 
     mode = cfg.get("NET_MODE", "ethernet")
-    if mode == "wifi":
-        res = connect_wifi(cfg.get("WIFI_SSID"), cfg.get("WIFI_PSK"))
-    else:
-        res = connect_ethernet()
+    # Retry before giving up. At a cold power-on the AP may not be answering
+    # yet, or a USB wifi dongle may not have enumerated by the time rc.d runs;
+    # a single attempt turned either transient into a stranded stick.
+    res = {"ok": False, "reason": "no attempt made", "ip": None}
+    for attempt in range(1, BOOT_NET_TRIES + 1):
+        if mode == "wifi":
+            res = connect_wifi(cfg.get("WIFI_SSID"), cfg.get("WIFI_PSK"))
+        else:
+            res = connect_ethernet()
+        if res["ok"]:
+            break
+        if attempt < BOOT_NET_TRIES:
+            time.sleep(BOOT_NET_BACKOFF * attempt)
 
     if not res["ok"]:
         # Saved network unreachable (e.g. the WiFi changed): drop to setup mode
@@ -1190,6 +1294,7 @@ def boot():
     sync_creds()
     if cfg.get("AUTO_START", "yes") == "yes":
         kiosk_start(cfg.get("CONTENT_URL"))
+    maybe_update()      # close the "powered off at 03:00 never updates" gap
     return {"provisioned": True, "connected": True, "ip": res["ip"]}
 
 

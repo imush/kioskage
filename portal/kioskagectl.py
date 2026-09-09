@@ -786,18 +786,15 @@ def kiosk_start(url=None):
     url = url or load_config().get("CONTENT_URL") or DEFAULT_URL
     # Publish the desired URL, then launch just the kiosk (no network re-boot).
     os.makedirs(RUN_DIR, exist_ok=True)
-    urlfile = os.path.join(RUN_DIR, "url")
-    try:
-        current = io.open(urlfile).read().strip()
-    except OSError:
-        current = None
-    with open(urlfile, "w") as f:
+    with open(os.path.join(RUN_DIR, "url"), "w") as f:
         f.write(url + "\n")
-    # rc.d's "kiosk" command is a no-op while Chromium is already up, so simply
-    # rewriting the URL file leaves the display on whatever it was showing —
-    # typically the setup portal, which then looks like the stick never
-    # recovered. Restart it when we are asking for a genuinely different page.
-    if current is not None and current != url and kiosk_running():
+    # xinitrc chooses what Chromium shows from the SETUP-MODE FLAG, not from the
+    # url file, and only re-reads it when Chromium exits. rc.d's "kiosk" command
+    # is a no-op while the session is up, so asking a running kiosk to show
+    # something else does nothing at all — the display stays on the setup portal
+    # and the stick looks broken even after it has fully recovered. The only way
+    # to change what is on screen is to restart the session.
+    if kiosk_running():
         kiosk_stop()
     run(["service", "kioskage", "kiosk"], timeout=10)
     return {"ok": True, "url": url}

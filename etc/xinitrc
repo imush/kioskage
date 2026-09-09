@@ -2,8 +2,11 @@
 #
 # .xinitrc for the kioskage kiosk. Runs inside the X session: starts a minimal
 # window manager and then loops Chromium in kiosk mode so a crash or a manual
-# quit relaunches automatically. The content URL is read fresh each iteration
-# from /var/run/kioskage/url (written by the portal) or kioskage.conf.
+# quit relaunches automatically. What Chromium shows is decided HERE, from the
+# setup-mode flag (see read_url below), and is only re-evaluated when Chromium
+# exits — so changing what is on screen means restarting the session, not
+# rewriting a file. /var/run/kioskage/url is written by the portal but is NOT
+# read here.
 #
 
 # Blank-screen / power management off — a sign should never sleep.

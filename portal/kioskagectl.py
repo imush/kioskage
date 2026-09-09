@@ -17,6 +17,7 @@ rather than crash the interpreter.
 
 import base64
 import hashlib
+import io
 import hmac
 import json
 import os
@@ -785,8 +786,19 @@ def kiosk_start(url=None):
     url = url or load_config().get("CONTENT_URL") or DEFAULT_URL
     # Publish the desired URL, then launch just the kiosk (no network re-boot).
     os.makedirs(RUN_DIR, exist_ok=True)
-    with open(os.path.join(RUN_DIR, "url"), "w") as f:
+    urlfile = os.path.join(RUN_DIR, "url")
+    try:
+        current = io.open(urlfile).read().strip()
+    except OSError:
+        current = None
+    with open(urlfile, "w") as f:
         f.write(url + "\n")
+    # rc.d's "kiosk" command is a no-op while Chromium is already up, so simply
+    # rewriting the URL file leaves the display on whatever it was showing —
+    # typically the setup portal, which then looks like the stick never
+    # recovered. Restart it when we are asking for a genuinely different page.
+    if current is not None and current != url and kiosk_running():
+        kiosk_stop()
     run(["service", "kioskage", "kiosk"], timeout=10)
     return {"ok": True, "url": url}
 

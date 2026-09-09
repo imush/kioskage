@@ -142,6 +142,18 @@ function updateAuth(s) {
   const locked = s.auth_required && !s.authed;
   $("authPanel").classList.toggle("hidden", !locked);
   if (locked) {
+    // Locked AND offline is the case that stranded a stick in the field: the
+    // person in front of it saw only a password prompt. Lead with the actual
+    // problem and the two password-free ways to fix it; the lock is secondary
+    // because it governs settings, not connectivity.
+    const offline = !s.ip;
+    $("authOffline").classList.toggle("hidden", !offline);
+    $("authTitle").textContent = offline
+      ? "Have the admin password?" : "🔒 This display is locked";
+    $("authLead").textContent = offline
+      ? "Only needed to change settings — not to get it back online."
+      : "Enter the admin password to change its settings.";
+    if (offline && s.setup_psk) $("authPsk").textContent = s.setup_psk;
     // A password is set and this browser isn't logged in: gate everything.
     $("configForm").classList.add("hidden");
     const sp = $("setupPanel"); if (sp) sp.classList.add("hidden");

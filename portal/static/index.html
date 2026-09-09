@@ -18,8 +18,23 @@
 
     <!-- Portal lock: shown when a password is set and this browser isn't logged in. -->
     <section id="authPanel" class="auth hidden">
-      <h2>🔒 This display is locked</h2>
-      <p class="muted">Enter the admin password to change its settings.</p>
+      <!-- Shown when the display is locked AND has no network. The lock exists
+           to gate CONFIG changes; getting the display back online needs no
+           password at all, so the instructions for that must stay visible —
+           otherwise the only thing on screen is a password prompt the person
+           standing there does not have, and a working display looks dead. -->
+      <div id="authOffline" class="hidden">
+        <h2>⚠ This display can’t reach the network</h2>
+        <p class="muted">It keeps trying and will come back on its own as soon
+           as it can. To help it along — no password needed:</p>
+        <ol class="methods">
+          <li><b>Ethernet</b> — plug a network cable into the display.</li>
+          <li><b>Wi-Fi</b> — start a phone hotspot with the password
+              <code id="authPsk">…</code>. Any hotspot name works.</li>
+        </ol>
+      </div>
+      <h2 id="authTitle">🔒 This display is locked</h2>
+      <p class="muted" id="authLead">Enter the admin password to change its settings.</p>
       <input type="password" id="authPw" placeholder="Admin password" autocomplete="off">
       <p class="err hidden" id="authErr">Wrong password.</p>
       <button type="button" id="authLogin" class="primary">Unlock</button>

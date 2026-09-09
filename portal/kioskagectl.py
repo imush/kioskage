@@ -1192,6 +1192,7 @@ def setup_watch():
     started = time.time()
     last_probe = 0.0
     ap_active = False
+    ap_possible = True   # cleared the first time the radio refuses hostap mode
     # Tie our lifetime to setup mode alone. provision() calls stop_setup_watch()
     # before it touches the radio and exit_setup_mode() on success, so
     # in_setup_mode() is the correct and sufficient guard. Also testing
@@ -1245,9 +1246,17 @@ def setup_watch():
             _setup_log("network up: %s" % primary_ip())
             _setup_tried.clear()
             ensure_mdns()
-        elif in_setup_mode() and (time.time() - started) >= AP_FALLBACK_SECS:
+        elif (in_setup_mode() and ap_possible
+                and (time.time() - started) >= AP_FALLBACK_SECS):
             r = ap_up()
             ap_active = bool(r.get("ok"))
+            if not ap_active:
+                # Single-radio units cannot do this at all: the station vap
+                # already owns the device and creating a hostap vap fails with
+                # EIO (seen on run(4)/RT5370). Stop asking — retrying every
+                # cycle only disturbs the radio the retry loop needs and floods
+                # the log. Recovering the real network is the path that works.
+                ap_possible = False
             _setup_log("AP fallback: %s" % r.get("reason"))
 
         cycles += 1

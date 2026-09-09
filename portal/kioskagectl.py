@@ -123,10 +123,14 @@ SETUP_RETRY_CYCLES = 8  # every N cycles, forget failures and re-try everything
 
 # Self-healing while in setup mode. A stick whose saved network is unreachable
 # has no other retry path, so this loop is its only way back: it re-tries the
-# saved network and a cable, then a setup hotspot, and finally serves its own AP
-# so the portal is reachable from a phone with no infrastructure at all.
-AP_FALLBACK_SECS = 180   # no network for this long in setup mode -> raise our own AP
-AP_RETRY_SECS = 300      # while that AP is up, re-probe the real network this often
+# saved network, then a cable, then a setup hotspot, indefinitely.
+#
+# It deliberately does NOT host its own AP. The appliance has a single radio,
+# the station vap owns it, and creating a hostap vap fails outright:
+#   ifconfig wlan1 create wlandev run0 wlanmode hostap
+#   -> SIOCIFCREATE2: Input/output error
+# so a fallback AP could never come up. ap_up()/ap_down() remain available from
+# the CLI for hardware that has a spare radio.
 
 # Boot: how hard to try the saved network before dropping to setup mode. One
 # attempt turned an ordinary transient (AP still booting, USB wifi dongle not
@@ -1183,16 +1187,9 @@ def setup_watch():
     nothing else re-tries a configured stick's network, so before this loop
     covered it a single failed association stranded the stick until someone
     visited the site.
-
-    Last resort: with no saved network, no cable and no setup hotspot, raise our
-    own AP so an operator can always reach the portal with just a phone.
     """
     _setup_log("setup-watch started")
     cycles = 0
-    started = time.time()
-    last_probe = 0.0
-    ap_active = False
-    ap_possible = True   # cleared the first time the radio refuses hostap mode
     # Tie our lifetime to setup mode alone. provision() calls stop_setup_watch()
     # before it touches the radio and exit_setup_mode() on success, so
     # in_setup_mode() is the correct and sufficient guard. Also testing
@@ -1200,10 +1197,6 @@ def setup_watch():
     # the sticks that needed it — a configured stick that had lost its network.
     while in_setup_mode():
         if primary_ip():
-            if ap_active:
-                ap_down()                            # a real network wins
-                ap_active = False
-                _setup_log("network back — AP fallback torn down")
             if load_config().get("CONFIGURED") == "yes":
                 resume_after_recovery()              # nobody else will
                 return
@@ -1212,18 +1205,6 @@ def setup_watch():
             cycles += 1
             time.sleep(SETUP_POLL)
             continue
-
-        # While our own AP is up we must not hijack the radio to scan on every
-        # cycle, or we drop the operator who is mid-setup on it. Re-probe the
-        # real network only every AP_RETRY_SECS.
-        if ap_active and (time.time() - last_probe) < AP_RETRY_SECS:
-            cycles += 1
-            time.sleep(SETUP_POLL)
-            continue
-        if ap_active:
-            ap_down()
-            ap_active = False
-        last_probe = time.time()
 
         release_stale_ip()                           # drop a dead link's stale IP
         cfg = load_config()
@@ -1246,18 +1227,6 @@ def setup_watch():
             _setup_log("network up: %s" % primary_ip())
             _setup_tried.clear()
             ensure_mdns()
-        elif (in_setup_mode() and ap_possible
-                and (time.time() - started) >= AP_FALLBACK_SECS):
-            r = ap_up()
-            ap_active = bool(r.get("ok"))
-            if not ap_active:
-                # Single-radio units cannot do this at all: the station vap
-                # already owns the device and creating a hostap vap fails with
-                # EIO (seen on run(4)/RT5370). Stop asking — retrying every
-                # cycle only disturbs the radio the retry loop needs and floods
-                # the log. Recovering the real network is the path that works.
-                ap_possible = False
-            _setup_log("AP fallback: %s" % r.get("reason"))
 
         cycles += 1
         time.sleep(SETUP_POLL)

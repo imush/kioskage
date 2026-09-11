@@ -133,6 +133,33 @@ sysrc syslogd_flags="-ss"
 sysrc -n devmatch_blocklist 2>/dev/null | grep -qw if_rtw88 \
     || sysrc devmatch_blocklist+="if_rtw88"
 
+# --------------------------------------------------------------------------
+# sshd: shut the network door, leave the console open
+# --------------------------------------------------------------------------
+# The appliance keeps an EMPTY root password deliberately. The on-screen recovery
+# procedure is "plug in a keyboard, Ctrl+Alt+F1, log in as root", and locking the
+# account (pw lock) would fail password auth at the CONSOLE too, leaving a
+# single-user boot as the only way in — a poor thing to ask of a volunteer
+# standing in front of a dead display. Physical access is already full control
+# here anyway: the installer USB re-images the disk unattended.
+#
+# So the console is not the boundary; the network is. prohibit-password rather
+# than no because it is identical today — no keys are installed, so root ssh is
+# impossible either way — but when a management tunnel arrives it becomes a
+# one-file addition (authorized_keys) instead of a config change.
+#
+# sshd_enable is set explicitly because these sticks have been running sshd
+# inherited from the base install, i.e. by accident rather than intent.
+sysrc sshd_enable="YES"
+_sshd=/etc/ssh/sshd_config
+if ! grep -q '^# --- kioskage ---' "$_sshd" 2>/dev/null; then
+    # Comment out any existing settings first: sshd honours the FIRST occurrence
+    # of a keyword, so appending alone would not override one set above.
+    sed -i '' -E 's/^[[:space:]]*(PermitRootLogin|PermitEmptyPasswords)[[:space:]]/#&/' "$_sshd"
+    printf '\n# --- kioskage ---\nPermitRootLogin prohibit-password\nPermitEmptyPasswords no\n' >> "$_sshd"
+    service sshd reload >/dev/null 2>&1 || true
+fi
+
 # Boot-time trim (config-level; no custom kernel): no mail agent, no crash
 # dumps. autoboot_delay is kept at 3s (not 0) so kernel.old stays selectable at
 # the console after a bad kernel update.

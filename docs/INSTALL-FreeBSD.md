@@ -41,7 +41,9 @@ diskutil eject /dev/disk4
 - Hostname: anything (the portal resets it later, e.g. `kiosk-a1b2c3`).
 - Distribution sets: `kernel` + `base` are enough (add `lib32` if unsure).
 - Partitioning: **Auto (ZFS)** → single disk → default.
-- Root password: set one (admin/SSH only).
+- Root password: leave it EMPTY. The console is the documented recovery path
+  (keyboard + Ctrl+Alt+F1), and install.sh shuts off password auth over the
+  network instead — see the sshd section there.
 - Network: pick the Ethernet interface → **IPv4 → DHCP → Yes**. Skip IPv6.
 - Resolver: accept defaults.
 - Time zone: your local zone.

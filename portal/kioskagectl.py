@@ -824,9 +824,33 @@ def ap_down():
 # Chromium kiosk
 # --------------------------------------------------------------------------
 
+KIOSK_PIDFILE = "/var/run/kioskage_kiosk.pid"
+
+
 def kiosk_running():
-    rc, _, _ = run(["pgrep", "-f", "kioskage-session"], timeout=5)
-    return rc == 0
+    """True when the kiosk session is up.
+
+    Checks the pidfile daemon(8) maintains — the same one rc.d/kioskage uses —
+    instead of matching a command line. kioskage-session ends in `exec xinit`,
+    so the process replaces itself and the string "kioskage-session" is gone
+    from the process table the moment the kiosk is actually running: the old
+    pgrep reported the kiosk as DOWN precisely when it was UP.
+
+    That is not merely cosmetic. kiosk_start() asks this before deciding whether
+    a restart is needed, so a false negative means a running kiosk is never
+    restarted and the display stays on whatever page it was already showing —
+    the same stuck-on-the-setup-screen failure that took two commits to fix.
+
+    Falls back to matching the xinitrc path, which IS present in the live
+    command line, in case the pidfile is missing (killed by hand, tmpfs wiped).
+    """
+    try:
+        pid = int(io.open(KIOSK_PIDFILE).read().strip())
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        pass
+    return run(["pgrep", "-f", "kioskage/xinitrc"], timeout=5)[0] == 0
 
 
 def kiosk_start(url=None):

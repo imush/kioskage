@@ -143,11 +143,16 @@ BOOT_NET_BACKOFF = 5     # seconds, multiplied by the attempt number
 
 # OTA: the nightly cron only reaches sticks powered on at 03:00, so a site that
 # switches the display off overnight would never update. A boot-time check
-# closes that gap; the stamp keeps a stick that is power-cycled several times a
-# day from re-checking on every boot.
+# closes that gap.
+#
+# The stamp exists to stop a crash-looping stick hammering the origin, NOT to
+# ration checks: an unchanged checkout costs one small git fetch and exits at
+# "nothing to do" without applying or restarting anything. A long window buys
+# nothing and delays a published fix by up to a day, so keep it short enough
+# that any ordinary boot picks up whatever is current.
 UPDATER = "/usr/local/sbin/kioskage-update"
 UPDATE_STAMP = "/var/db/kioskage-update.stamp"
-UPDATE_MIN_INTERVAL = 20 * 3600
+UPDATE_MIN_INTERVAL = 15 * 60
 
 # Content: the portal's "kiosk key" builds CONTENT_URL_BASE + "?key=<key>" (many
 # kiosks sharing one content site). Empty base -> the key field is hidden and

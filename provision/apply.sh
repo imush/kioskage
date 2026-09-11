@@ -53,6 +53,34 @@ chmod +x "$PREFIX/etc/rc.d/kioskage" "$PREFIX/etc/rc.d/kioskage_portal"
 # default shipped in the (public) code repo, then, if a brand overlay was pulled
 # (KIOSKAGE_OVERLAY_SRC, set by kioskage-update), copy its files over — the
 # brand.conf, an optional logo, and any static portal overrides it ships.
+# Chromium managed policy. The kiosk shows content in whatever language the site
+# renders, so Chromium offers to translate it and parks a bubble over the sign.
+# --disable-translate and --disable-features=TranslateUI no longer do anything in
+# current Chromium; TranslateEnabled is the supported, still-honoured control.
+# Policy rather than a profile pref because the profile lives in tmpfs and is
+# rebuilt on every boot, while this persists.
+# Chromium compiles its policy directory in, and the path differs between ports
+# and versions — a policy written to the wrong directory is silently ignored,
+# which is exactly how --disable-translate and --disable-features=TranslateUI
+# have been failing here. So read the real path out of the binary and only fall
+# back to the FreeBSD convention if that finds nothing.
+_pol=""
+for _c in "$PREFIX/bin/chrome" "$PREFIX/share/chromium/chrome" "$PREFIX/bin/chromium"; do
+  [ -f "$_c" ] || continue
+  _pol=$(grep -aoE '/[A-Za-z0-9_./-]+/policies/managed' "$_c" 2>/dev/null | head -1)
+  [ -n "$_pol" ] && break
+done
+[ -n "$_pol" ] || _pol="$PREFIX/etc/chromium/policies/managed"
+echo "chromium policy dir: $_pol"
+mkdir -p "$_pol"
+cat > "$_pol/kioskage.json" <<'POLICY'
+{
+  "TranslateEnabled": false,
+  "SpellcheckEnabled": false,
+  "DefaultNotificationsSetting": 2
+}
+POLICY
+
 cp "$REPO_DIR/etc/brand.conf" "$PREFIX/etc/kioskage-brand.conf"
 OVERLAY="${KIOSKAGE_OVERLAY_SRC:-}"
 if [ -n "$OVERLAY" ] && [ -d "$OVERLAY" ]; then

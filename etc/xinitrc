@@ -60,7 +60,7 @@ while :; do
         --disable-infobars \
         --no-first-run \
         --disable-translate \
-        --disable-features=TranslateUI \
+        --disable-features=Translate,TranslateUI \
         --disable-session-crashed-bubble \
         --disable-restore-session-state \
         --disk-cache-dir=/var/run/kioskage/chrome-cache \

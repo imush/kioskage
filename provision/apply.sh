@@ -3,8 +3,12 @@
 # apply.sh - install the current repo's application files onto an already-
 # provisioned stick and restart the affected services. This is the fast path
 # used by OTA app updates (kioskage-update): it copies the portal, rc.d and X
-# session files and bounces the portal, but does NOT touch packages, the user,
-# or rc.conf (that is provision/install.sh's one-time job).
+# session files and bounces the portal.
+#
+# It also applies provision/system-config.sh - the handful of system settings
+# (rc.conf, sshd) that must reach sticks ALREADY in the field, since a change
+# confined to install.sh only ever reaches newly provisioned ones. It does not
+# create the user or do a full package install; that remains install.sh's job.
 #
 # Usage: sh provision/apply.sh [--kiosk]
 #   --kiosk  also restart the running Chromium kiosk (needed when the X session
@@ -22,6 +26,9 @@ log() { echo ">>> $*"; }
 [ "$(id -u)" -eq 0 ] || { echo "run as root"; exit 1; }
 
 log "Applying app files from $REPO_DIR"
+
+. "$REPO_DIR/provision/system-config.sh"
+kioskage_system_config
 mkdir -p "$KIOSKAGE_HOME"
 
 # apply.sh normally avoids package changes, but the xinitrc needs unclutter

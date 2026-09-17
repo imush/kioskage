@@ -16,6 +16,13 @@
 #
 set -eu
 
+# rc(8) and cron(8) start us with a minimal PATH that omits /usr/local/bin,
+# where git lives. Without this, every `git` call here silently fails: the
+# recorded VERSION becomes "unknown" (invisible to fleet tooling) and a
+# boot-time OTA check does nothing at all.
+PATH=/usr/local/sbin:/usr/local/bin:$PATH
+export PATH
+
 REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)
 PREFIX=/usr/local
 KIOSKAGE_HOME=/usr/local/libexec/kioskage

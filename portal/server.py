@@ -293,6 +293,13 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
 
 
 def main():
+    # A cron update restarts this service but never reboots, so this is the only
+    # hook that runs after apply.sh drops in a new brand.conf. Without it a new
+    # TIMEZONE waits for a power cycle that may never come.
+    try:
+        ctl.apply_timezone_now()
+    except Exception:
+        pass
     servers = []
     servers.append(("http", QuietThreadingHTTPServer(("0.0.0.0", PORT),
                                                       Handler)))

@@ -348,6 +348,29 @@ def adopt_timezone(tz):
         return False
     cfg["TIMEZONE"] = tz
     save_config(cfg)
+    apply_timezone_now()
+    return True
+
+
+def apply_timezone_now():
+    """Apply the configured zone to the RUNNING system, not just at next boot.
+
+    ensure_timezone() is only called from boot(), which is fine for a stick that
+    gets power-cycled but not for one that updates by cron: apply.sh restarts the
+    portal and never reboots, so a zone arriving with an update (brand.conf) or a
+    credential sync sat in config unapplied indefinitely. The kolpak display ran
+    on UTC for days that way, with the right zone already in its config.
+
+    Chromium reads the zone once at launch, so changing /etc/localtime under a
+    running kiosk does not move the clock on screen — the session has to be
+    restarted. Only restarts when the zone actually changed, and only when a
+    kiosk is up, so this is a no-op on a healthy stick.
+    """
+    if not ensure_timezone():
+        return False
+    if kiosk_running():
+        kiosk_stop()
+        kiosk_start()
     return True
 
 
@@ -363,7 +386,7 @@ def sync_creds():
         # The server knows where this kiosk is — its key carries the timezone the
         # calendar itself is rendered with, so adopting it keeps the appliance
         # clock and the content in agreement, and lets one fleet span cities.
-        # Applied by ensure_timezone() on the next boot.
+        # Applied immediately by adopt_timezone(); see apply_timezone_now().
         adopt_timezone(resp.get("tz"))
 
 

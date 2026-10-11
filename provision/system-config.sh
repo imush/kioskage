@@ -34,14 +34,14 @@ kioskage_system_config() {
     fi
 
     # ---- Clock: keep it synced ---------------------------------------------
-    # FreeBSD ships ntpd disabled and nothing here ever enabled it, so every
-    # stick has been free-running on its RTC since it was flashed - the shul
-    # display drifted a couple of minutes. For a sign whose content is zmanim,
-    # minutes are the entire point.
+    # The factory image already enables ntpd in its baked /etc/rc.conf.local, so
+    # a stick flashed from the installer USB is fine. Sticks MIGRATED from
+    # signage-stick never got that file - the shul display is one, and it drifted
+    # a couple of minutes. For a sign whose content is zmanim, minutes matter.
     #
+    # Setting it here brings those sticks in line and is a no-op on the rest.
     # ntpd_sync_on_start steps the clock at boot (-g) rather than slewing, so a
-    # stick that sat powered off for weeks is correct within seconds of coming
-    # up instead of hours.
+    # stick that sat powered off for weeks is right within seconds of coming up.
     sysrc ntpd_enable="YES" >/dev/null
     sysrc ntpd_sync_on_start="YES" >/dev/null
     if ! pgrep -q ntpd 2>/dev/null; then

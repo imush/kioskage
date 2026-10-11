@@ -1284,6 +1284,32 @@ def content_reachable():
     return rc == 0
 
 
+def drop_unusable_ip():
+    """Release the address on the interface that owns the default route.
+
+    release_stale_ip() only fires when a link has lost carrier. The failure
+    that strands a display is the opposite: the radio stays ASSOCIATED and the
+    lease stays valid while nothing is reachable. That address is worse than
+    none, because primary_ip() is how the rest of this file decides whether the
+    stick has a network - setup_watch() resumes immediately if it sees one, so
+    setup mode would not even hold. Dropping it is what lets the stick fall
+    back to setup mode and, eventually, its own AP.
+    """
+    dev = default_route_iface()
+    if not dev:
+        return False
+    st = iface_status(dev)
+    if not st["ip"]:
+        return False
+    stop_dhclient(dev)
+    run(["route", "-q", "delete", "default"], timeout=5)
+    run(["ifconfig", dev, "inet", st["ip"], "delete"], timeout=5)
+    run(["resolvconf", "-d", dev], timeout=5)
+    _setup_log("dropped unusable ip %s on %s (associated but unreachable)"
+               % (st["ip"], dev))
+    return True
+
+
 def net_watchdog():
     """Catch the failure that looks like a dead display but is not.
 
@@ -1309,17 +1335,20 @@ def net_watchdog():
     """
     lan_fails = 0
     content_fails = 0
+    degraded = False
     while True:
         time.sleep(NET_WATCH_INTERVAL)
         try:
             cfg = load_config()
             if cfg.get("CONFIGURED") != "yes" or in_setup_mode():
                 lan_fails = content_fails = 0
+                degraded = False
                 continue
 
             if not lan_reachable():
                 content_fails = 0
                 lan_fails += 1
+                degraded = True
                 _setup_log("net-watch: gateway unreachable (%d)" % lan_fails)
                 if lan_fails == NET_WATCH_FAILS:
                     _setup_log("net-watch: re-connecting the saved network")
@@ -1328,22 +1357,29 @@ def net_watchdog():
                     else:
                         connect_ethernet()
                 elif lan_fails >= NET_WATCH_FAILS * 2:
-                    _setup_log("net-watch: still no LAN - entering setup mode")
+                    # Drop the address FIRST: setup_watch() resumes the moment it
+                    # sees an ip, so entering setup mode while holding a useless
+                    # lease would undo itself within seconds and the display would
+                    # flap between blank content and the portal every half hour.
+                    _setup_log("net-watch: still no LAN - handing over to setup")
+                    drop_unusable_ip()
                     enter_setup_mode()
                     lan_fails = 0
                 continue
 
             lan_fails = 0
             if content_reachable():
-                if content_fails:
-                    # It came back. Chromium is sitting on whatever error page
-                    # it landed on and will not retry on its own.
-                    _setup_log("net-watch: content reachable again - reloading")
+                if degraded:
+                    # Whatever broke is fixed, but Chromium is still sitting on
+                    # the error page it landed on and will not retry by itself.
+                    _setup_log("net-watch: recovered - reloading the kiosk")
                     kiosk_stop()
                     kiosk_start()
+                    degraded = False
                 content_fails = 0
             else:
                 content_fails += 1
+                degraded = True
                 _setup_log("net-watch: LAN ok, content unreachable (%d) - "
                            "upstream, leaving the network alone" % content_fails)
         except Exception as e:                      # never let the watchdog die

@@ -33,6 +33,27 @@ kioskage_system_config() {
             || sysrc devmatch_blocklist+="if_rtw88"
     fi
 
+    # ---- Clock: keep it synced ---------------------------------------------
+    # FreeBSD ships ntpd disabled and nothing here ever enabled it, so every
+    # stick has been free-running on its RTC since it was flashed - the shul
+    # display drifted a couple of minutes. For a sign whose content is zmanim,
+    # minutes are the entire point.
+    #
+    # ntpd_sync_on_start steps the clock at boot (-g) rather than slewing, so a
+    # stick that sat powered off for weeks is correct within seconds of coming
+    # up instead of hours.
+    sysrc ntpd_enable="YES" >/dev/null
+    sysrc ntpd_sync_on_start="YES" >/dev/null
+    if ! pgrep -q ntpd 2>/dev/null; then
+        # Step once before starting the daemon. ntpd slews at most 500 ppm, so
+        # letting it correct an existing two-minute error would take days; -gq
+        # sets the clock in one go and exits. Bounded by timeout and tolerant of
+        # failure (no network yet, blocked UDP 123): the daemon still converges.
+        timeout 60 ntpd -gq >/dev/null 2>&1 || true
+        service ntpd start >/dev/null 2>&1 || true
+        echo "ntpd: enabled, clock stepped and daemon started"
+    fi
+
     # ---- sshd: shut the network door, leave the console open --------------
     # The appliance keeps an EMPTY root password deliberately: the documented
     # recovery is "keyboard, Ctrl+Alt+F1, log in as root", and pw lock would fail

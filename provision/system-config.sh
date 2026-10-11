@@ -54,6 +54,22 @@ kioskage_system_config() {
         echo "ntpd: enabled, clock stepped and daemon started"
     fi
 
+    # ---- Keep the diagnostic logs, and keep them bounded -------------------
+    # setup.log used to live in /var/run (tmpfs), so the single log that
+    # explains a stranded display vanished on the reboot people try first -
+    # which is exactly how the kolpak outage ended up undiagnosable. It is on
+    # disk now, so it needs rotating or it will quietly fill a small pool.
+    _nsd="${_prefix}/etc/newsyslog.conf.d"
+    if [ ! -f "$_nsd/kioskage.conf" ]; then
+        mkdir -p "$_nsd"
+        cat > "$_nsd/kioskage.conf" <<'NEWSYSLOG'
+# logfile                      owner:group  mode count size  when  flags
+/var/log/kioskage-setup.log    root:wheel   644  5     200   *     JC
+/var/log/kioskage-update.log   root:wheel   644  5     500   *     JC
+NEWSYSLOG
+        echo "newsyslog: rotation installed for kioskage logs"
+    fi
+
     # ---- sshd: shut the network door, leave the console open --------------
     # The appliance keeps an EMPTY root password deliberately: the documented
     # recovery is "keyboard, Ctrl+Alt+F1, log in as root", and pw lock would fail

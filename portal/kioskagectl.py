@@ -1224,14 +1224,20 @@ def factory_reset():
 
 
 _setup_tried = set()
-SETUP_LOG = os.path.join(RUN_DIR, "setup.log")
+# On disk, NOT in RUN_DIR: /var/run is tmpfs, so the one log that explains a
+# stranded display used to die on the reboot everybody tries first. Rotated by
+# the newsyslog drop-in that system-config.sh installs, so it cannot grow
+# without bound on a small appliance pool.
+SETUP_LOG = os.environ.get("KIOSKAGE_SETUP_LOG", "/var/log/kioskage-setup.log")
 
 
 def _setup_log(msg):
+    # Full date, not just the clock: this file now survives reboots and spans
+    # days, so a bare HH:MM:SS cannot be lined up against anything.
     try:
-        os.makedirs(RUN_DIR, exist_ok=True)
+        os.makedirs(os.path.dirname(SETUP_LOG), exist_ok=True)
         with open(SETUP_LOG, "a") as f:
-            f.write("%s %s\n" % (time.strftime("%H:%M:%S"), msg))
+            f.write("%s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg))
     except Exception:
         pass
 

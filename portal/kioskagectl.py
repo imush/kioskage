@@ -1236,6 +1236,117 @@ def _setup_log(msg):
         pass
 
 
+# --------------------------------------------------------------------------
+# Network watchdog
+# --------------------------------------------------------------------------
+
+NET_WATCH_INTERVAL = 300     # seconds between checks
+NET_WATCH_FAILS = 3          # consecutive failures before we act
+
+
+def default_gateway():
+    """The current IPv4 default gateway, or None."""
+    rc, out, _ = run(["netstat", "-rn", "-f", "inet"], timeout=5)
+    if rc != 0:
+        return None
+    for line in out.splitlines():
+        f = line.split()
+        if len(f) > 1 and f[0] == "default":
+            return f[1]
+    return None
+
+
+def lan_reachable():
+    """True if the default gateway answers. Distinguishes a broken local link
+    from a working LAN with a dead uplink - the two need opposite responses."""
+    gw = default_gateway()
+    if not gw:
+        return False
+    rc, _, _ = run(["ping", "-c", "2", "-t", "3", gw], timeout=10)
+    return rc == 0
+
+
+def content_reachable():
+    """True if the stick can actually fetch what the screen is meant to show.
+
+    Deliberately NOT a ping to 8.8.8.8: a filtered site may drop ICMP to the
+    outside world while the content loads perfectly, and acting on that would
+    take a working display down. What matters is the content URL itself.
+    """
+    url = load_config().get("CONTENT_URL") or DEFAULT_URL
+    rc, _, _ = run(["fetch", "-qo", "/dev/null", "-T", "10", url], timeout=20)
+    return rc == 0
+
+
+def net_watchdog():
+    """Catch the failure that looks like a dead display but is not.
+
+    A stick can stay associated, hold a valid lease and still reach nothing -
+    stuck on an access point whose link has collapsed. Everything times out,
+    the kiosk shows a blank page, and because there IS an ip nothing else in
+    this file reacts: boot() finished long ago, and setup_watch() only runs in
+    setup mode and only when there is no address at all. That is how a healthy
+    stick sits in front of a white screen for days (kolpak, Sep 2026).
+
+    Two very different faults, so two responses:
+
+      gateway down  - the local link is broken. Re-associate; if that does not
+                      help, fall back to setup mode so the screen says so and
+                      setup_watch() takes over (including raising its own AP).
+
+      gateway up,   - the LAN is fine and the uplink is not: ISP down, site
+      content down    down, DNS upstream. Touching the radio would be wrong and
+                      dropping to setup mode would blank a working display for
+                      something that is not ours to fix. Log it, leave the
+                      network alone, and restart the kiosk when it returns so
+                      the page reloads instead of staying on a stale error.
+    """
+    lan_fails = 0
+    content_fails = 0
+    while True:
+        time.sleep(NET_WATCH_INTERVAL)
+        try:
+            cfg = load_config()
+            if cfg.get("CONFIGURED") != "yes" or in_setup_mode():
+                lan_fails = content_fails = 0
+                continue
+
+            if not lan_reachable():
+                content_fails = 0
+                lan_fails += 1
+                _setup_log("net-watch: gateway unreachable (%d)" % lan_fails)
+                if lan_fails == NET_WATCH_FAILS:
+                    _setup_log("net-watch: re-connecting the saved network")
+                    if cfg.get("NET_MODE", "ethernet") == "wifi":
+                        connect_wifi(cfg.get("WIFI_SSID"), cfg.get("WIFI_PSK"))
+                    else:
+                        connect_ethernet()
+                elif lan_fails >= NET_WATCH_FAILS * 2:
+                    _setup_log("net-watch: still no LAN - entering setup mode")
+                    enter_setup_mode()
+                    lan_fails = 0
+                continue
+
+            lan_fails = 0
+            if content_reachable():
+                if content_fails:
+                    # It came back. Chromium is sitting on whatever error page
+                    # it landed on and will not retry on its own.
+                    _setup_log("net-watch: content reachable again - reloading")
+                    kiosk_stop()
+                    kiosk_start()
+                content_fails = 0
+            else:
+                content_fails += 1
+                _setup_log("net-watch: LAN ok, content unreachable (%d) - "
+                           "upstream, leaving the network alone" % content_fails)
+        except Exception as e:                      # never let the watchdog die
+            try:
+                _setup_log("net-watch: error %s" % e)
+            except Exception:
+                pass
+
+
 def try_setup_hotspot():
     """Join the setup hotspot: any network that accepts SETUP_PSK. iPhone
     hotspots are named after the device, so we match by PASSWORD, not SSID —

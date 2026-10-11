@@ -300,6 +300,11 @@ def main():
         ctl.apply_timezone_now()
     except Exception:
         pass
+    # Watch for "associated but nothing reachable" - the failure that leaves a
+    # healthy stick in front of a blank screen. Daemon thread: it must never
+    # hold up the portal or keep it alive.
+    threading.Thread(target=ctl.net_watchdog, daemon=True).start()
+
     servers = []
     servers.append(("http", QuietThreadingHTTPServer(("0.0.0.0", PORT),
                                                       Handler)))

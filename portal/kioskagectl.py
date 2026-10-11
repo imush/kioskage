@@ -1423,6 +1423,19 @@ def try_setup_hotspot():
     return False
 
 
+def network_usable():
+    """An address is not a network.
+
+    setup_watch() resumed on primary_ip() alone, so a stick that reconnected to
+    the same dead access point - association up, lease valid, nothing
+    reachable - declared itself recovered and went straight back to a blank
+    screen. Require that something actually answers: the gateway, or failing
+    that the content itself (a gateway may drop ICMP while the site loads
+    perfectly, and that case must still count as working).
+    """
+    return lan_reachable() or content_reachable()
+
+
 def resume_after_recovery():
     """Finish what boot() would have done, for a CONFIGURED stick that has just
     healed its own network from inside setup_watch().
@@ -1469,8 +1482,19 @@ def setup_watch():
     while in_setup_mode():
         if primary_ip():
             if load_config().get("CONFIGURED") == "yes":
-                resume_after_recovery()              # nobody else will
-                return
+                if network_usable():
+                    resume_after_recovery()          # nobody else will
+                    return
+                # An address that reaches nothing is worse than no address: it
+                # is what made this loop declare victory and hand a blank screen
+                # back to the room. Drop it so the retry machinery below (which
+                # is all guarded on "no ip") gets its turn on the next pass.
+                _setup_log("setup-watch: ip %s reaches nothing - dropping it"
+                           % primary_ip())
+                drop_unusable_ip()
+                cycles += 1
+                time.sleep(SETUP_POLL)
+                continue
             # Unconfigured: stay put. The portal is reachable now and an
             # operator still has to choose a network and a content URL.
             cycles += 1

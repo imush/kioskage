@@ -137,6 +137,23 @@ if [ -n "$OVERLAY_REPO" ]; then
   export KIOSKAGE_OVERLAY_SRC="$OVERLAY_DIR"
 fi
 
+# A fetch that did not move is not proof the stick is up to date. sync_repo
+# resets the checkout BEFORE anything is applied, so a run that died later - the
+# overlay fetch failing on a DNS blip, apply.sh crashing - leaves an advanced
+# checkout with the old files still installed. The next run then sees no
+# movement and reports "up to date" at the stale VERSION, forever: one failed
+# update silently poisons every update after it. Seen on the canary, stuck on
+# a0355d5 with a6c71cf checked out. So compare what is INSTALLED against what is
+# checked out, and apply whenever they disagree.
+want=$(git -C "$CODE_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)
+if [ -n "$OVERLAY_REPO" ] && [ -d "$OVERLAY_DIR/.git" ]; then
+  want="$want+$(git -C "$OVERLAY_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+fi
+if [ "$want" != "$(cat "$KIOSKAGE_HOME/VERSION" 2>/dev/null)" ]; then
+  [ "$changed" = no ] && log "checkout $want is not the installed version - applying"
+  changed=yes
+fi
+
 if [ "$changed" = no ] && [ -f "$KIOSKAGE_HOME/VERSION" ]; then
   log "Already up to date ($(cat "$KIOSKAGE_HOME/VERSION")) - nothing to do"
   exit 0
